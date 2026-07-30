@@ -4,6 +4,7 @@ from langchain_core.runnables import RunnableLambda
 from langgraph.types import Command
 
 from app.graph.builder import build_graph
+from app.graph.report import IncidentReport
 from app.graph.schemas import (
     ApprovalGateDecision,
     DiagnosticPlan,
@@ -45,6 +46,12 @@ def _no_proposals_approval_llm() -> RunnableLambda:
     return RunnableLambda(lambda messages: ApprovalGateDecision(proposed_actions=[]))
 
 
+def _stub_report_llm() -> RunnableLambda:
+    """None of these tests exercise report generation itself — just enough to let the graph
+    reach the final "completed" state without constructing a real ChatGroq."""
+    return RunnableLambda(lambda messages: IncidentReport(markdown="# Report\n\nStub report."))
+
+
 def _plan_llm(steps: list[DiagnosticStep] | None = None) -> RunnableLambda:
     steps = steps or [
         DiagnosticStep(
@@ -77,6 +84,7 @@ def test_graph_completes_without_clarification(fake_retriever: FakeRetriever) ->
         tools_llm=_no_op_tools_llm(),
         plan_llm=_plan_llm(),
         approval_llm=_no_proposals_approval_llm(),
+        report_llm=_stub_report_llm(),
         retriever=fake_retriever,
     )
 
@@ -121,6 +129,7 @@ def test_graph_interrupt_then_resume(fake_retriever: FakeRetriever) -> None:
         tools_llm=_no_op_tools_llm(),
         plan_llm=_plan_llm(),
         approval_llm=_no_proposals_approval_llm(),
+        report_llm=_stub_report_llm(),
         retriever=fake_retriever,
     )
 
@@ -166,6 +175,7 @@ def test_graph_asks_only_one_round_of_clarification(fake_retriever: FakeRetrieve
         tools_llm=_no_op_tools_llm(),
         plan_llm=_plan_llm(),
         approval_llm=_no_proposals_approval_llm(),
+        report_llm=_stub_report_llm(),
         retriever=fake_retriever,
     )
 
@@ -193,6 +203,7 @@ def test_retrieve_query_includes_category(fake_retriever: FakeRetriever) -> None
         tools_llm=_no_op_tools_llm(),
         plan_llm=_plan_llm(),
         approval_llm=_no_proposals_approval_llm(),
+        report_llm=_stub_report_llm(),
         retriever=fake_retriever,
     )
 

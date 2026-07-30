@@ -20,6 +20,7 @@ from app.graph.nodes import (
     route_after_classify,
     route_after_propose_actions,
 )
+from app.graph.report import IncidentReport, build_report_node
 from app.graph.schemas import (
     ApprovalGateDecision,
     Citation,
@@ -67,6 +68,7 @@ def build_graph(
     tools_llm: Runnable[Any, Any] | None = None,
     plan_llm: Runnable[Any, DiagnosticPlan] | None = None,
     approval_llm: Runnable[Any, ApprovalGateDecision] | None = None,
+    report_llm: Runnable[Any, IncidentReport] | None = None,
     retriever: KnowledgeRetriever | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     settings: Settings | None = None,
@@ -76,6 +78,7 @@ def build_graph(
     tools_llm = tools_llm or _default_chat_llm(settings)
     plan_llm = plan_llm or _default_structured_llm(settings, DiagnosticPlan)
     approval_llm = approval_llm or _default_structured_llm(settings, ApprovalGateDecision)
+    report_llm = report_llm or _default_structured_llm(settings, IncidentReport)
     retriever = retriever or get_retriever()
     checkpointer = checkpointer or MemorySaver(serde=CHECKPOINT_SERDE)
 
@@ -87,6 +90,7 @@ def build_graph(
     graph.add_node("plan", build_plan_node(plan_llm))
     graph.add_node("propose_actions", build_propose_actions_node(approval_llm))
     graph.add_node("approval_gate", build_approval_gate_node())
+    graph.add_node("report", build_report_node(report_llm))
 
     graph.add_edge(START, "classify")
     graph.add_conditional_edges(
@@ -97,8 +101,9 @@ def build_graph(
     graph.add_edge("tools", "plan")
     graph.add_edge("plan", "propose_actions")
     graph.add_conditional_edges(
-        "propose_actions", route_after_propose_actions, {"approval_gate": "approval_gate", "skip": END}
+        "propose_actions", route_after_propose_actions, {"approval_gate": "approval_gate", "skip": "report"}
     )
-    graph.add_edge("approval_gate", END)
+    graph.add_edge("approval_gate", "report")
+    graph.add_edge("report", END)
 
     return graph.compile(checkpointer=checkpointer)

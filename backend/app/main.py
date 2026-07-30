@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -46,6 +47,14 @@ class IncidentResponse(BaseModel):
     sources: list[RetrievedChunk] | None = None
     tool_results: list[ToolResult] | None = None
     audit_log: list[AuditEntry] | None = None
+    report: str | None = None
+    report_warnings: list[str] | None = None
+
+
+class ReportResponse(BaseModel):
+    markdown: str
+    generated_at: datetime
+    warnings: list[str]
 
 
 class EvidenceUploadResponse(BaseModel):
@@ -82,6 +91,8 @@ def _build_response(
         sources=values.get("retrieved_chunks"),
         tool_results=values.get("tool_results"),
         audit_log=values.get("audit_log"),
+        report=values.get("report"),
+        report_warnings=values.get("report_warnings"),
     )
 
 
@@ -140,6 +151,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not snapshot.values:
             raise HTTPException(status_code=404, detail="Unknown thread_id")
         return _build_response(thread_id, snapshot.values, snapshot.interrupts)
+
+    @app.get("/incidents/{thread_id}/report")
+    async def get_incident_report(thread_id: str) -> ReportResponse:
+        config = {"configurable": {"thread_id": thread_id}}
+        snapshot = await app.state.graph.aget_state(config)
+        if not snapshot.values:
+            raise HTTPException(status_code=404, detail="Unknown thread_id")
+        markdown = snapshot.values.get("report")
+        if markdown is None:
+            raise HTTPException(
+                status_code=404, detail="Report not generated yet for this thread_id"
+            )
+        return ReportResponse(
+            markdown=markdown,
+            generated_at=snapshot.values["report_generated_at"],
+            warnings=snapshot.values.get("report_warnings") or [],
+        )
 
     @app.post("/incidents/{thread_id}/evidence")
     async def upload_evidence(thread_id: str, file: UploadFile) -> EvidenceUploadResponse:

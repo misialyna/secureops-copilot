@@ -2,6 +2,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 
 from app.graph.builder import build_graph
+from app.graph.report import IncidentReport
 from app.graph.schemas import (
     ApprovalGateDecision,
     Citation,
@@ -62,11 +63,13 @@ def test_citations_survive_graph_to_api_response() -> None:
     tools_llm = RunnableLambda(lambda messages: AIMessage(content="", tool_calls=[]))
     # no active actions proposed here either — same reasoning as tools_llm above
     approval_llm = RunnableLambda(lambda messages: ApprovalGateDecision(proposed_actions=[]))
+    report_llm = RunnableLambda(lambda messages: IncidentReport(markdown="# Report\n\nStub."))
     graph = build_graph(
         classify_llm=classify_llm,
         tools_llm=tools_llm,
         plan_llm=plan_llm,
         approval_llm=approval_llm,
+        report_llm=report_llm,
         retriever=FakeRetriever(),
     )
 

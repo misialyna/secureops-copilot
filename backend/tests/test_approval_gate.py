@@ -5,6 +5,7 @@ from langchain_core.runnables import RunnableLambda
 from langgraph.types import Command
 
 from app.graph.builder import build_graph
+from app.graph.report import IncidentReport
 from app.graph.schemas import (
     ApprovalGateDecision,
     DiagnosticPlan,
@@ -77,12 +78,19 @@ def _no_proposals_llm() -> RunnableLambda:
     return RunnableLambda(lambda messages: ApprovalGateDecision(proposed_actions=[]))
 
 
+def _report_llm() -> RunnableLambda:
+    """None of these tests exercise report generation itself — just enough to let the graph
+    reach the final "completed" state without constructing a real ChatGroq."""
+    return RunnableLambda(lambda messages: IncidentReport(markdown="# Report\n\nStub report."))
+
+
 def _build(approval_llm: RunnableLambda) -> object:
     return build_graph(
         classify_llm=_classify_llm(),
         tools_llm=_tools_llm(),
         plan_llm=_plan_llm(),
         approval_llm=approval_llm,
+        report_llm=_report_llm(),
         retriever=FakeRetriever(),
     )
 

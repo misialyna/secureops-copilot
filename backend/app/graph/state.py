@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 from app.graph.schemas import DiagnosticPlan, IncidentClassification
@@ -20,3 +22,6 @@ class AgentState(BaseModel):
     plan: DiagnosticPlan | None = None
     proposed_actions: list[ProposedAction] = Field(default_factory=list)
     audit_log: list[AuditEntry] = Field(default_factory=list)
+    report: str | None = None
+    report_warnings: list[str] = Field(default_factory=list)
+    report_generated_at: datetime | None = None
