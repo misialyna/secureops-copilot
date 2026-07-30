@@ -2,7 +2,13 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 
 from app.graph.builder import build_graph
-from app.graph.schemas import Citation, DiagnosticPlan, DiagnosticStep, IncidentClassification
+from app.graph.schemas import (
+    ApprovalGateDecision,
+    Citation,
+    DiagnosticPlan,
+    DiagnosticStep,
+    IncidentClassification,
+)
 from app.main import _build_response
 from app.rag.retriever import RetrievedChunk
 
@@ -54,10 +60,13 @@ def test_citations_survive_graph_to_api_response() -> None:
     # this incident has no uploaded evidence, so the tools node returns before ever calling
     # tools_llm — it only needs to exist so build_graph() doesn't construct a real ChatGroq
     tools_llm = RunnableLambda(lambda messages: AIMessage(content="", tool_calls=[]))
+    # no active actions proposed here either — same reasoning as tools_llm above
+    approval_llm = RunnableLambda(lambda messages: ApprovalGateDecision(proposed_actions=[]))
     graph = build_graph(
         classify_llm=classify_llm,
         tools_llm=tools_llm,
         plan_llm=plan_llm,
+        approval_llm=approval_llm,
         retriever=FakeRetriever(),
     )
 

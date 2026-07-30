@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 
 from app.graph.schemas import DiagnosticPlan, IncidentClassification
 from app.rag.retriever import RetrievedChunk
+from app.tools.approval import AuditEntry, ProposedAction
 from app.tools.registry import ToolResult
 
 
@@ -17,3 +18,5 @@ class AgentState(BaseModel):
     clarifications: list[ClarificationPair] = Field(default_factory=list)
     tool_results: list[ToolResult] = Field(default_factory=list)
     plan: DiagnosticPlan | None = None
+    proposed_actions: list[ProposedAction] = Field(default_factory=list)
+    audit_log: list[AuditEntry] = Field(default_factory=list)

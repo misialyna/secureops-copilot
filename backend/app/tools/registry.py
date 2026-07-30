@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.tools.approval import ApprovalDecision
+
 
 class ToolSpec(BaseModel):
     name: str
@@ -36,12 +38,14 @@ def get_spec(name: str) -> ToolSpec:
     return spec
 
 
-def execute_tool(name: str, **kwargs: Any) -> ToolResult:
+def execute_tool(
+    name: str, args: dict[str, Any] | None = None, approval: ApprovalDecision | None = None
+) -> ToolResult:
     spec, fn = _REGISTRY[name]
-    if spec.risk_level == "active":
-        raise NotImplementedError(
-            f"Tool '{name}' is risk_level='active' and requires human approval before "
-            "it can run. The approval gate is not implemented yet (planned for a later stage) "
-            "— this is a placeholder to make the gap explicit rather than silently executing."
+    if spec.risk_level == "active" and not (approval is not None and approval.approved):
+        raise PermissionError(
+            f"Tool '{name}' is risk_level='active' and requires an approved ApprovalDecision "
+            "before it can run — none was provided, or it was not approved. This check is "
+            "enforced here regardless of what any LLM decides."
         )
-    return fn(**kwargs)
+    return fn(**(args or {}))

@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.tools.approval import ProposedActionDraft
+
 IncidentCategory = Literal[
     "malware",
     "ransomware",
@@ -40,3 +42,10 @@ class DiagnosticStep(BaseModel):
 class DiagnosticPlan(BaseModel):
     steps: list[DiagnosticStep]
     caveats: list[str] = Field(default_factory=list)
+
+
+class ApprovalGateDecision(BaseModel):
+    """Structured output of the approval_gate node's LLM call — a list of *drafts*, not yet
+    assigned a stable id (see ProposedActionDraft vs ProposedAction in app/tools/approval.py)."""
+
+    proposed_actions: list[ProposedActionDraft] = Field(default_factory=list)

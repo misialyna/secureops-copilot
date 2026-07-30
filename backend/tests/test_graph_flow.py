@@ -4,7 +4,12 @@ from langchain_core.runnables import RunnableLambda
 from langgraph.types import Command
 
 from app.graph.builder import build_graph
-from app.graph.schemas import DiagnosticPlan, DiagnosticStep, IncidentClassification
+from app.graph.schemas import (
+    ApprovalGateDecision,
+    DiagnosticPlan,
+    DiagnosticStep,
+    IncidentClassification,
+)
 from app.graph.state import ClarificationPair
 from app.rag.retriever import RetrievedChunk
 
@@ -32,6 +37,12 @@ def _no_op_tools_llm() -> RunnableLambda:
     """None of these tests upload evidence, so the tools node returns before this is ever
     invoked — it only needs to exist so build_graph() doesn't construct a real ChatGroq."""
     return RunnableLambda(lambda messages: AIMessage(content="", tool_calls=[]))
+
+
+def _no_proposals_approval_llm() -> RunnableLambda:
+    """None of these tests exercise the approval gate itself — this just avoids the node
+    proposing (or interrupting on) anything so the graph reaches "completed" as before."""
+    return RunnableLambda(lambda messages: ApprovalGateDecision(proposed_actions=[]))
 
 
 def _plan_llm(steps: list[DiagnosticStep] | None = None) -> RunnableLambda:
@@ -65,6 +76,7 @@ def test_graph_completes_without_clarification(fake_retriever: FakeRetriever) ->
         classify_llm=classify_llm,
         tools_llm=_no_op_tools_llm(),
         plan_llm=_plan_llm(),
+        approval_llm=_no_proposals_approval_llm(),
         retriever=fake_retriever,
     )
 
@@ -108,6 +120,7 @@ def test_graph_interrupt_then_resume(fake_retriever: FakeRetriever) -> None:
         classify_llm=RunnableLambda(fake_classify),
         tools_llm=_no_op_tools_llm(),
         plan_llm=_plan_llm(),
+        approval_llm=_no_proposals_approval_llm(),
         retriever=fake_retriever,
     )
 
@@ -152,6 +165,7 @@ def test_graph_asks_only_one_round_of_clarification(fake_retriever: FakeRetrieve
         classify_llm=RunnableLambda(always_incomplete),
         tools_llm=_no_op_tools_llm(),
         plan_llm=_plan_llm(),
+        approval_llm=_no_proposals_approval_llm(),
         retriever=fake_retriever,
     )
 
@@ -178,6 +192,7 @@ def test_retrieve_query_includes_category(fake_retriever: FakeRetriever) -> None
         classify_llm=classify_llm,
         tools_llm=_no_op_tools_llm(),
         plan_llm=_plan_llm(),
+        approval_llm=_no_proposals_approval_llm(),
         retriever=fake_retriever,
     )
 

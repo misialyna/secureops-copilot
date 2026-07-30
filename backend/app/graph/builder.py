@@ -10,16 +10,26 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.config import Settings
 from app.graph.nodes import (
+    build_approval_gate_node,
     build_clarify_node,
     build_classify_node,
     build_plan_node,
+    build_propose_actions_node,
     build_retrieve_node,
     build_tools_node,
     route_after_classify,
+    route_after_propose_actions,
 )
-from app.graph.schemas import Citation, DiagnosticPlan, DiagnosticStep, IncidentClassification
+from app.graph.schemas import (
+    ApprovalGateDecision,
+    Citation,
+    DiagnosticPlan,
+    DiagnosticStep,
+    IncidentClassification,
+)
 from app.graph.state import AgentState, ClarificationPair
 from app.rag.retriever import KnowledgeRetriever, RetrievedChunk, get_retriever
+from app.tools.approval import ApprovalDecision, AuditEntry, ProposedAction
 from app.tools.registry import ToolResult
 
 # Our own Pydantic models aren't in langgraph's built-in msgpack allowlist, so without this the
@@ -35,6 +45,9 @@ CHECKPOINT_SERDE = JsonPlusSerializer(
         ClarificationPair,
         RetrievedChunk,
         ToolResult,
+        ProposedAction,
+        ApprovalDecision,
+        AuditEntry,
     ]
 )
 
@@ -53,6 +66,7 @@ def build_graph(
     classify_llm: Runnable[Any, IncidentClassification] | None = None,
     tools_llm: Runnable[Any, Any] | None = None,
     plan_llm: Runnable[Any, DiagnosticPlan] | None = None,
+    approval_llm: Runnable[Any, ApprovalGateDecision] | None = None,
     retriever: KnowledgeRetriever | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     settings: Settings | None = None,
@@ -61,6 +75,7 @@ def build_graph(
     classify_llm = classify_llm or _default_structured_llm(settings, IncidentClassification)
     tools_llm = tools_llm or _default_chat_llm(settings)
     plan_llm = plan_llm or _default_structured_llm(settings, DiagnosticPlan)
+    approval_llm = approval_llm or _default_structured_llm(settings, ApprovalGateDecision)
     retriever = retriever or get_retriever()
     checkpointer = checkpointer or MemorySaver(serde=CHECKPOINT_SERDE)
 
@@ -70,6 +85,8 @@ def build_graph(
     graph.add_node("retrieve", build_retrieve_node(retriever))
     graph.add_node("tools", build_tools_node(tools_llm, settings=settings))
     graph.add_node("plan", build_plan_node(plan_llm))
+    graph.add_node("propose_actions", build_propose_actions_node(approval_llm))
+    graph.add_node("approval_gate", build_approval_gate_node())
 
     graph.add_edge(START, "classify")
     graph.add_conditional_edges(
@@ -78,6 +95,10 @@ def build_graph(
     graph.add_edge("clarify", "classify")
     graph.add_edge("retrieve", "tools")
     graph.add_edge("tools", "plan")
-    graph.add_edge("plan", END)
+    graph.add_edge("plan", "propose_actions")
+    graph.add_conditional_edges(
+        "propose_actions", route_after_propose_actions, {"approval_gate": "approval_gate", "skip": END}
+    )
+    graph.add_edge("approval_gate", END)
 
     return graph.compile(checkpointer=checkpointer)

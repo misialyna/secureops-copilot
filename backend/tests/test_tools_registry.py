@@ -1,6 +1,9 @@
+from datetime import UTC, datetime
+
 import pytest
 
 import app.tools.registry as registry_module
+from app.tools.approval import ApprovalDecision
 from app.tools.registry import (
     ToolResult,
     ToolSpec,
@@ -62,7 +65,7 @@ def test_execute_tool_runs_read_only_tool() -> None:
     assert result.summary == "ran fine"
 
 
-def test_execute_tool_blocks_active_tools_pending_approval_gate() -> None:
+def test_execute_tool_blocks_active_tools_without_approval() -> None:
     register_tool(
         ToolSpec(
             name="dummy_active",
@@ -73,5 +76,42 @@ def test_execute_tool_blocks_active_tools_pending_approval_gate() -> None:
         _dummy_active,
     )
 
-    with pytest.raises(NotImplementedError, match="approval"):
+    with pytest.raises(PermissionError, match="approv"):
         execute_tool("dummy_active")
+
+
+def test_execute_tool_blocks_active_tools_with_unapproved_decision() -> None:
+    register_tool(
+        ToolSpec(
+            name="dummy_active",
+            description="A dummy active tool for tests.",
+            risk_level="active",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        _dummy_active,
+    )
+    decision = ApprovalDecision(
+        action_id="a1", approved=False, decided_at=datetime.now(UTC), comment="no"
+    )
+
+    with pytest.raises(PermissionError, match="approv"):
+        execute_tool("dummy_active", approval=decision)
+
+
+def test_execute_tool_runs_active_tool_with_approved_decision() -> None:
+    register_tool(
+        ToolSpec(
+            name="dummy_active",
+            description="A dummy active tool for tests.",
+            risk_level="active",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        _dummy_active,
+    )
+    decision = ApprovalDecision(
+        action_id="a1", approved=True, decided_at=datetime.now(UTC), comment="go ahead"
+    )
+
+    result = execute_tool("dummy_active", approval=decision)
+
+    assert result.summary == "should never run"

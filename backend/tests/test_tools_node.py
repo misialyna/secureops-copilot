@@ -68,11 +68,11 @@ def test_tools_node_executes_real_tool_chosen_by_fake_llm(tmp_path: Path) -> Non
     result = node(state, config)
 
     assert fake_llm.bound_tools is not None
-    assert {tool["function"]["name"] for tool in fake_llm.bound_tools} >= {
-        "log_analyzer",
-        "pcap_analyzer",
-        "attack_lookup",
-    }
+    bound_names = {tool["function"]["name"] for tool in fake_llm.bound_tools}
+    assert bound_names >= {"log_analyzer", "pcap_analyzer", "attack_lookup"}
+    # active tools (e.g. block_ip) must never be offered here — only via
+    # propose_actions/approval_gate, after human approval
+    assert "block_ip" not in bound_names
 
     tool_results = result["tool_results"]
     assert len(tool_results) == 1

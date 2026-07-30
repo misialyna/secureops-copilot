@@ -4,17 +4,17 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-import aiosqlite
 from fastapi import FastAPI, HTTPException, UploadFile
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command, Interrupt
 from pydantic import BaseModel
 
 from app.config import Settings
 from app.evidence import UnsupportedEvidenceExtension, list_evidence, store_evidence
-from app.graph.builder import CHECKPOINT_SERDE, build_graph
+from app.graph.builder import build_graph
+from app.graph.checkpointer import get_checkpointer
 from app.graph.schemas import DiagnosticPlan, IncidentClassification
 from app.rag.retriever import RetrievedChunk, get_retriever
+from app.tools.approval import ApprovalDecision, AuditEntry, ProposedAction
 from app.tools.registry import ToolResult
 
 
@@ -23,17 +23,29 @@ class IncidentRequest(BaseModel):
 
 
 class ResumeRequest(BaseModel):
-    answers: dict[str, str]
+    """Resumes a paused thread with exactly one of the two payload shapes, matching
+    whichever `status` the previous response reported:
+    - answers: for status="awaiting_clarification" (clarify node).
+    - approvals: for status="awaiting_approval" (approval_gate node).
+    Both fields exist on one model rather than two endpoints because they drive the exact
+    same underlying operation (resume a paused LangGraph thread with a value) — the only
+    difference is which shape the currently-paused node expects.
+    """
+
+    answers: dict[str, str] | None = None
+    approvals: list[ApprovalDecision] | None = None
 
 
 class IncidentResponse(BaseModel):
     thread_id: str
-    status: Literal["awaiting_clarification", "completed"]
+    status: Literal["awaiting_clarification", "awaiting_approval", "completed"]
     pending_questions: list[str] | None = None
+    proposed_actions: list[ProposedAction] | None = None
     classification: IncidentClassification | None = None
     plan: DiagnosticPlan | None = None
     sources: list[RetrievedChunk] | None = None
     tool_results: list[ToolResult] | None = None
+    audit_log: list[AuditEntry] | None = None
 
 
 class EvidenceUploadResponse(BaseModel):
@@ -51,7 +63,14 @@ def _build_response(
     thread_id: str, values: dict[str, Any], interrupts: Sequence[Interrupt]
 ) -> IncidentResponse:
     if interrupts:
-        questions = interrupts[0].value.get("questions", [])
+        payload = interrupts[0].value
+        if "proposed_actions" in payload:
+            return IncidentResponse(
+                thread_id=thread_id,
+                status="awaiting_approval",
+                proposed_actions=payload["proposed_actions"],
+            )
+        questions = payload.get("questions", [])
         return IncidentResponse(
             thread_id=thread_id, status="awaiting_clarification", pending_questions=questions
         )
@@ -62,18 +81,14 @@ def _build_response(
         plan=values.get("plan"),
         sources=values.get("retrieved_chunks"),
         tool_results=values.get("tool_results"),
+        audit_log=values.get("audit_log"),
     )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = Settings()
-    checkpoint_path = Path(settings.checkpoint_db_path)
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-
-    async with aiosqlite.connect(str(checkpoint_path)) as conn:
-        checkpointer = AsyncSqliteSaver(conn, serde=CHECKPOINT_SERDE)
-        await checkpointer.setup()
+    async with get_checkpointer(settings) as checkpointer:
         app.state.graph = build_graph(checkpointer=checkpointer, settings=settings)
         yield
 
@@ -101,8 +116,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/incidents/{thread_id}/resume")
     async def resume_incident(thread_id: str, payload: ResumeRequest) -> IncidentResponse:
+        if payload.answers is not None and payload.approvals is not None:
+            raise HTTPException(
+                status_code=400, detail="Provide either 'answers' or 'approvals', not both."
+            )
+        if payload.approvals is not None:
+            resume_value: Any = [a.model_dump(mode="json") for a in payload.approvals]
+        elif payload.answers is not None:
+            resume_value = payload.answers
+        else:
+            raise HTTPException(
+                status_code=400, detail="Provide either 'answers' or 'approvals'."
+            )
+
         config = {"configurable": {"thread_id": thread_id}}
-        result = await app.state.graph.ainvoke(Command(resume=payload.answers), config=config)
+        result = await app.state.graph.ainvoke(Command(resume=resume_value), config=config)
         return _build_response(thread_id, result, result.get("__interrupt__", ()))
 
     @app.get("/incidents/{thread_id}")
