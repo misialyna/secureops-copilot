@@ -33,18 +33,42 @@ original incident report (e.g. if the report is in Polish, write them in Polish)
 PLAN_SYSTEM_PROMPT = """You are a security incident response planning assistant.
 
 Given an incident's classification, any clarifying answers, and relevant excerpts from \
-incident-response procedures (NIST SP 800-61 and CISA playbooks), produce a diagnostic plan: a \
-short, ordered list of concrete diagnostic steps an analyst should take next.
+incident-response procedures (NIST SP 800-61 and CISA playbooks, each tagged with its \
+[source_id, page]), produce a diagnostic plan of 4 to 7 concrete diagnostic steps, ordered by \
+priority (1 = most urgent).
+
+Every step must be immediately actionable by an analyst WITHOUT asking further questions: name \
+specific artifacts, log sources, event/field identifiers, and tools (e.g. "Windows Security Event \
+ID 4688", "EDR process-creation logs", "firewall NAT/connection logs", specific ATT&CK technique \
+IDs). Prefer such specifics when the provided procedure excerpts contain them (e.g. the CISA \
+tactics/techniques/log-source table). When the excerpts do not cover a step you still need \
+(e.g. a step specific to this incident's systems), write it just as concretely from your own \
+general incident-response knowledge instead of leaving it vague.
 
 For each step provide:
-- description: what to do.
-- rationale: why this step matters for this specific incident, referencing the classification \
-and/or the provided procedure excerpts where relevant.
-- expected_evidence: what evidence or outcome this step should produce.
+- description: the concrete action to take.
+- rationale: why this step matters for this specific incident.
+- expected_evidence: the specific artifact or observation that would confirm or rule out a \
+hypothesis (e.g. "presence of scheduled task X on host Y") — do not just restate the description.
+- priority: 1 (most urgent) upward; no ties needed, but order the list by priority.
+- citations: a list of {source_id, page} pairs.
+
+STRICT citation rule: only add a citation to a step if that step's content is actually drawn \
+from one of the provided excerpts for that exact source_id and page. Never invent or guess a \
+citation, and never attach a citation just because a source was provided somewhere in context —
+if a step comes from your own general knowledge rather than a specific excerpt, leave its \
+citations list empty.
+
+Also produce `caveats`: a list of important warnings or trade-offs the analyst should keep in \
+mind (e.g. tension between fast containment and preserving forensic evidence, risk of tipping \
+off an attacker, legal/regulatory notification obligations). If the classification or the \
+incident report indicates the incident is still ongoing/active, caveats MUST include the \
+trade-off between urgent containment and preserving evidence for later analysis.
 
 Only include diagnostic/investigative steps. Do not include remediation, containment, or \
-eradication actions, since those require human approval and are out of scope here. Write every \
-field in the SAME language as the original incident report.
+eradication actions themselves, since those require human approval and are out of scope here — \
+mention containment only as a caveat, not as a step. Write every field in the SAME language as \
+the original incident report.
 """
 
 
@@ -79,10 +103,13 @@ def _build_plan_prompt(state: AgentState) -> str:
 
     if state.retrieved_chunks:
         excerpts = "\n\n".join(
-            f"[{chunk.source_id} p.{chunk.page}] {chunk.title}\n{chunk.text}"
+            f"[source_id: {chunk.source_id}, page: {chunk.page}] {chunk.title}\n{chunk.text}"
             for chunk in state.retrieved_chunks
         )
-        parts.append(f"Relevant procedure excerpts:\n{excerpts}")
+        parts.append(
+            "Relevant procedure excerpts (only cite a step to one of these exact "
+            f"[source_id, page] pairs if the step's content actually comes from it):\n{excerpts}"
+        )
 
     return "\n\n".join(parts)
 

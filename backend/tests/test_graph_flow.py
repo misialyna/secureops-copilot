@@ -33,6 +33,7 @@ def _plan_llm(steps: list[DiagnosticStep] | None = None) -> RunnableLambda:
             description="Collect endpoint logs",
             rationale="Confirm the infection vector",
             expected_evidence="Relevant log entries",
+            priority=1,
         )
     ]
     return RunnableLambda(lambda messages: DiagnosticPlan(steps=steps))

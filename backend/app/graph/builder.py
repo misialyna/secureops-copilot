@@ -16,7 +16,7 @@ from app.graph.nodes import (
     build_retrieve_node,
     route_after_classify,
 )
-from app.graph.schemas import DiagnosticPlan, DiagnosticStep, IncidentClassification
+from app.graph.schemas import Citation, DiagnosticPlan, DiagnosticStep, IncidentClassification
 from app.graph.state import AgentState, ClarificationPair
 from app.rag.retriever import KnowledgeRetriever, RetrievedChunk, get_retriever
 
@@ -29,6 +29,7 @@ CHECKPOINT_SERDE = JsonPlusSerializer(
         IncidentClassification,
         DiagnosticPlan,
         DiagnosticStep,
+        Citation,
         ClarificationPair,
         RetrievedChunk,
     ]

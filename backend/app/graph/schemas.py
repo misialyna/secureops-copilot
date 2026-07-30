@@ -24,11 +24,19 @@ class IncidentClassification(BaseModel):
     missing_info: list[str] = Field(default_factory=list)
 
 
+class Citation(BaseModel):
+    source_id: str
+    page: int
+
+
 class DiagnosticStep(BaseModel):
     description: str
     rationale: str
     expected_evidence: str
+    priority: int = Field(ge=1)
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class DiagnosticPlan(BaseModel):
     steps: list[DiagnosticStep]
+    caveats: list[str] = Field(default_factory=list)
