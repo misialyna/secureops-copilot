@@ -3,6 +3,7 @@ from pathlib import Path
 from langchain_core.messages import AIMessage
 
 from app.config import Settings
+from app.evidence import store_evidence
 from app.graph.nodes import MAX_TOOL_CALLS, build_tools_node
 from app.graph.state import AgentState
 
@@ -40,11 +41,16 @@ def _tool_call(name: str, args: dict, call_id: str) -> dict:
     return {"name": name, "args": args, "id": call_id, "type": "tool_call"}
 
 
+def _upload(evidence_dir: Path, filename: str, text: str) -> None:
+    """Store fixture evidence the same way the real /evidence endpoint does, so the
+    tools node's manifest-based lookup finds it (a bare write to evidence_dir would not)."""
+    store_evidence(evidence_dir, filename, text.encode())
+
+
 def test_tools_node_executes_real_tool_chosen_by_fake_llm(tmp_path: Path) -> None:
     thread_id = "thread-abc"
     evidence_dir = tmp_path / "evidence" / thread_id
-    evidence_dir.mkdir(parents=True)
-    (evidence_dir / "auth.log").write_text("\n".join(_AUTH_LOG_LINES) + "\n")
+    _upload(evidence_dir, "auth.log", "\n".join(_AUTH_LOG_LINES) + "\n")
     settings = Settings(evidence_dir=str(tmp_path / "evidence"))
 
     fake_llm = FakeToolCallingLLM(
@@ -91,8 +97,7 @@ def test_tools_node_skips_when_no_evidence_uploaded(tmp_path: Path) -> None:
 def test_tools_node_stops_after_max_tool_calls(tmp_path: Path) -> None:
     thread_id = "loop-thread"
     evidence_dir = tmp_path / "evidence" / thread_id
-    evidence_dir.mkdir(parents=True)
-    (evidence_dir / "auth.log").write_text("harmless log line\n")
+    _upload(evidence_dir, "auth.log", "harmless log line\n")
     settings = Settings(evidence_dir=str(tmp_path / "evidence"))
 
     # An LLM that always wants to call another tool and never stops on its own.
@@ -116,8 +121,7 @@ def test_tools_node_stops_after_max_tool_calls(tmp_path: Path) -> None:
 def test_tools_node_handles_unknown_tool_call_gracefully(tmp_path: Path) -> None:
     thread_id = "bad-call-thread"
     evidence_dir = tmp_path / "evidence" / thread_id
-    evidence_dir.mkdir(parents=True)
-    (evidence_dir / "auth.log").write_text("harmless\n")
+    _upload(evidence_dir, "auth.log", "harmless\n")
     settings = Settings(evidence_dir=str(tmp_path / "evidence"))
 
     fake_llm = FakeToolCallingLLM(
@@ -134,3 +138,37 @@ def test_tools_node_handles_unknown_tool_call_gracefully(tmp_path: Path) -> None
 
     assert len(result["tool_results"]) == 1
     assert result["tool_results"][0].warnings
+
+
+def test_tools_node_rejects_unresolvable_file_path(tmp_path: Path) -> None:
+    """If a tool call references a file_path that isn't a known evidence display name
+    (e.g. an attacker-influenced string an LLM might echo back), the node must report an
+    error instead of resolving it against the filesystem — and must never touch anything
+    outside this thread's evidence directory."""
+    thread_id = "traversal-thread"
+    evidence_root = tmp_path / "evidence"
+    evidence_dir = evidence_root / thread_id
+    _upload(evidence_dir, "auth.log", "harmless\n")
+    settings = Settings(evidence_dir=str(evidence_root))
+
+    fake_llm = FakeToolCallingLLM(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    _tool_call("log_analyzer", {"file_path": "../../../etc/passwd"}, "call_1")
+                ],
+            ),
+            AIMessage(content="done", tool_calls=[]),
+        ]
+    )
+    node = build_tools_node(fake_llm, settings=settings)
+
+    result = node(
+        AgentState(incident_description="x"), {"configurable": {"thread_id": thread_id}}
+    )
+
+    assert len(result["tool_results"]) == 1
+    assert result["tool_results"][0].warnings
+    assert not (tmp_path / "etc").exists()
+    assert not (evidence_root / "etc").exists()

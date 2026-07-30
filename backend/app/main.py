@@ -11,12 +11,11 @@ from langgraph.types import Command, Interrupt
 from pydantic import BaseModel
 
 from app.config import Settings
+from app.evidence import UnsupportedEvidenceExtension, list_evidence, store_evidence
 from app.graph.builder import CHECKPOINT_SERDE, build_graph
 from app.graph.schemas import DiagnosticPlan, IncidentClassification
 from app.rag.retriever import RetrievedChunk, get_retriever
 from app.tools.registry import ToolResult
-
-ALLOWED_EVIDENCE_EXTENSIONS = {".log", ".txt", ".pcap", ".pcapng"}
 
 
 class IncidentRequest(BaseModel):
@@ -79,9 +78,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
 
 
-def create_app() -> FastAPI:
+def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(lifespan=lifespan)
-    settings = Settings()
+    settings = settings or Settings()
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -116,17 +115,6 @@ def create_app() -> FastAPI:
 
     @app.post("/incidents/{thread_id}/evidence")
     async def upload_evidence(thread_id: str, file: UploadFile) -> EvidenceUploadResponse:
-        filename = Path(file.filename or "").name
-        extension = Path(filename).suffix.lower()
-        if not filename or extension not in ALLOWED_EVIDENCE_EXTENSIONS:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Unsupported or missing file extension '{extension}'. "
-                    f"Allowed: {sorted(ALLOWED_EVIDENCE_EXTENSIONS)}"
-                ),
-            )
-
         max_bytes = settings.max_evidence_file_size_mb * 1024 * 1024
         contents = await file.read(max_bytes + 1)
         if len(contents) > max_bytes:
@@ -136,18 +124,19 @@ def create_app() -> FastAPI:
             )
 
         evidence_dir = Path(settings.evidence_dir) / thread_id
-        evidence_dir.mkdir(parents=True, exist_ok=True)
-        (evidence_dir / filename).write_bytes(contents)
+        try:
+            _, display_name = store_evidence(evidence_dir, file.filename or "", contents)
+        except UnsupportedEvidenceExtension as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         return EvidenceUploadResponse(
-            thread_id=thread_id, filename=filename, size_bytes=len(contents)
+            thread_id=thread_id, filename=display_name, size_bytes=len(contents)
         )
 
     @app.get("/incidents/{thread_id}/evidence")
-    async def list_evidence(thread_id: str) -> EvidenceListResponse:
+    async def get_incident_evidence(thread_id: str) -> EvidenceListResponse:
         evidence_dir = Path(settings.evidence_dir) / thread_id
-        files = sorted(p.name for p in evidence_dir.iterdir()) if evidence_dir.exists() else []
-        return EvidenceListResponse(thread_id=thread_id, files=files)
+        return EvidenceListResponse(thread_id=thread_id, files=list_evidence(evidence_dir))
 
     return app
 
