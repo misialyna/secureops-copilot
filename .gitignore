@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node
+node_modules/
+
+# Explicit pyc (covered above by *.py[codz], kept for clarity)
+*.pyc
+
