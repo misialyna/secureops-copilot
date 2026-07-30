@@ -1,3 +1,4 @@
+from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 
 from app.graph.builder import build_graph
@@ -50,7 +51,15 @@ def test_citations_survive_graph_to_api_response() -> None:
             caveats=["Balance urgent containment against preserving forensic evidence."],
         )
     )
-    graph = build_graph(classify_llm=classify_llm, plan_llm=plan_llm, retriever=FakeRetriever())
+    # this incident has no uploaded evidence, so the tools node returns before ever calling
+    # tools_llm — it only needs to exist so build_graph() doesn't construct a real ChatGroq
+    tools_llm = RunnableLambda(lambda messages: AIMessage(content="", tool_calls=[]))
+    graph = build_graph(
+        classify_llm=classify_llm,
+        tools_llm=tools_llm,
+        plan_llm=plan_llm,
+        retriever=FakeRetriever(),
+    )
 
     config = {"configurable": {"thread_id": "citation-passthrough"}}
     result = graph.invoke(

@@ -15,3 +15,14 @@ class Settings(BaseSettings):
 
     groq_model_name: str = "llama-3.3-70b-versatile"
     checkpoint_db_path: str = "data/checkpoints.sqlite"
+    groq_max_retries: int = 3
+    groq_retry_backoff_seconds: float = 1.0
+
+    attack_stix_url: str = (
+        "https://raw.githubusercontent.com/mitre-attack/attack-stix-data/"
+        "master/enterprise-attack/enterprise-attack.json"
+    )
+    attack_stix_path: str = "knowledge/raw/enterprise-attack.json"
+
+    evidence_dir: str = "data/evidence"
+    max_evidence_file_size_mb: int = 50

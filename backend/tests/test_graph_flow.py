@@ -1,4 +1,5 @@
 import pytest
+from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 from langgraph.types import Command
 
@@ -25,6 +26,12 @@ class FakeRetriever:
                 score=0.9,
             )
         ]
+
+
+def _no_op_tools_llm() -> RunnableLambda:
+    """None of these tests upload evidence, so the tools node returns before this is ever
+    invoked — it only needs to exist so build_graph() doesn't construct a real ChatGroq."""
+    return RunnableLambda(lambda messages: AIMessage(content="", tool_calls=[]))
 
 
 def _plan_llm(steps: list[DiagnosticStep] | None = None) -> RunnableLambda:
@@ -54,7 +61,12 @@ def test_graph_completes_without_clarification(fake_retriever: FakeRetriever) ->
             missing_info=[],
         )
     )
-    graph = build_graph(classify_llm=classify_llm, plan_llm=_plan_llm(), retriever=fake_retriever)
+    graph = build_graph(
+        classify_llm=classify_llm,
+        tools_llm=_no_op_tools_llm(),
+        plan_llm=_plan_llm(),
+        retriever=fake_retriever,
+    )
 
     config = {"configurable": {"thread_id": "no-clarification"}}
     result = graph.invoke(
@@ -94,6 +106,7 @@ def test_graph_interrupt_then_resume(fake_retriever: FakeRetriever) -> None:
 
     graph = build_graph(
         classify_llm=RunnableLambda(fake_classify),
+        tools_llm=_no_op_tools_llm(),
         plan_llm=_plan_llm(),
         retriever=fake_retriever,
     )
@@ -137,6 +150,7 @@ def test_graph_asks_only_one_round_of_clarification(fake_retriever: FakeRetrieve
 
     graph = build_graph(
         classify_llm=RunnableLambda(always_incomplete),
+        tools_llm=_no_op_tools_llm(),
         plan_llm=_plan_llm(),
         retriever=fake_retriever,
     )
@@ -160,7 +174,12 @@ def test_retrieve_query_includes_category(fake_retriever: FakeRetriever) -> None
             missing_info=[],
         )
     )
-    graph = build_graph(classify_llm=classify_llm, plan_llm=_plan_llm(), retriever=fake_retriever)
+    graph = build_graph(
+        classify_llm=classify_llm,
+        tools_llm=_no_op_tools_llm(),
+        plan_llm=_plan_llm(),
+        retriever=fake_retriever,
+    )
 
     graph.invoke(
         {"incident_description": "Website is unreachable, huge traffic spike"},

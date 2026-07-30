@@ -14,11 +14,13 @@ from app.graph.nodes import (
     build_classify_node,
     build_plan_node,
     build_retrieve_node,
+    build_tools_node,
     route_after_classify,
 )
 from app.graph.schemas import Citation, DiagnosticPlan, DiagnosticStep, IncidentClassification
 from app.graph.state import AgentState, ClarificationPair
 from app.rag.retriever import KnowledgeRetriever, RetrievedChunk, get_retriever
+from app.tools.registry import ToolResult
 
 # Our own Pydantic models aren't in langgraph's built-in msgpack allowlist, so without this the
 # checkpointer falls back to a deprecated "allow unregistered types with a warning" mode that a
@@ -32,6 +34,7 @@ CHECKPOINT_SERDE = JsonPlusSerializer(
         Citation,
         ClarificationPair,
         RetrievedChunk,
+        ToolResult,
     ]
 )
 
@@ -41,9 +44,14 @@ def _default_structured_llm(settings: Settings, schema: type) -> Runnable[Any, A
     return llm.with_structured_output(schema)
 
 
+def _default_chat_llm(settings: Settings) -> Runnable[Any, Any]:
+    return ChatGroq(model=settings.groq_model_name, api_key=settings.groq_api_key, temperature=0)
+
+
 def build_graph(
     *,
     classify_llm: Runnable[Any, IncidentClassification] | None = None,
+    tools_llm: Runnable[Any, Any] | None = None,
     plan_llm: Runnable[Any, DiagnosticPlan] | None = None,
     retriever: KnowledgeRetriever | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
@@ -51,6 +59,7 @@ def build_graph(
 ) -> CompiledStateGraph:
     settings = settings or Settings()
     classify_llm = classify_llm or _default_structured_llm(settings, IncidentClassification)
+    tools_llm = tools_llm or _default_chat_llm(settings)
     plan_llm = plan_llm or _default_structured_llm(settings, DiagnosticPlan)
     retriever = retriever or get_retriever()
     checkpointer = checkpointer or MemorySaver(serde=CHECKPOINT_SERDE)
@@ -59,6 +68,7 @@ def build_graph(
     graph.add_node("classify", build_classify_node(classify_llm))
     graph.add_node("clarify", build_clarify_node())
     graph.add_node("retrieve", build_retrieve_node(retriever))
+    graph.add_node("tools", build_tools_node(tools_llm, settings=settings))
     graph.add_node("plan", build_plan_node(plan_llm))
 
     graph.add_edge(START, "classify")
@@ -66,7 +76,8 @@ def build_graph(
         "classify", route_after_classify, {"clarify": "clarify", "retrieve": "retrieve"}
     )
     graph.add_edge("clarify", "classify")
-    graph.add_edge("retrieve", "plan")
+    graph.add_edge("retrieve", "tools")
+    graph.add_edge("tools", "plan")
     graph.add_edge("plan", END)
 
     return graph.compile(checkpointer=checkpointer)

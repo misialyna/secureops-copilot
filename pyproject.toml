@@ -21,9 +21,12 @@ dependencies = [
     "langchain-text-splitters",
     "langchain-core",
     "langchain-groq",
+    "groq",
     "langgraph",
     "langgraph-checkpoint-sqlite",
     "aiosqlite",
+    "scapy",
+    "python-multipart",
 ]
 
 [dependency-groups]

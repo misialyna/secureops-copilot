@@ -231,3 +231,6 @@ data/qdrant/
 # LangGraph checkpoint DB: local run/session state, not committed.
 data/checkpoints.sqlite*
 
+# Uploaded evidence files (per-incident, user-provided), not committed.
+data/evidence/
+

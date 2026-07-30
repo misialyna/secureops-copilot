@@ -42,6 +42,29 @@ def download_source(source: KnowledgeSource, raw_dir: Path) -> Path:
     return dest
 
 
+def download_attack_stix(settings: Settings) -> Path:
+    """Download the MITRE ATT&CK enterprise-attack STIX bundle used by attack_lookup.py.
+
+    Unlike the RAG PDF sources, this file is not chunked/embedded — it's parsed lazily
+    and cached in memory by attack_lookup.py, looked up by technique ID or keyword.
+    """
+    dest = Path(settings.attack_stix_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        logger.info("MITRE ATT&CK STIX bundle already downloaded at %s, skipping", dest)
+        return dest
+
+    logger.info("Downloading MITRE ATT&CK STIX bundle from %s", settings.attack_stix_url)
+    with httpx.stream(
+        "GET", settings.attack_stix_url, follow_redirects=True, timeout=120.0
+    ) as response:
+        response.raise_for_status()
+        with dest.open("wb") as f:
+            for chunk in response.iter_bytes():
+                f.write(chunk)
+    return dest
+
+
 def extract_pages(pdf_path: Path) -> list[str]:
     with fitz.open(pdf_path) as doc:
         return [page.get_text() for page in doc]
@@ -87,6 +110,8 @@ def build_index() -> None:
         source_chunks = chunk_source(source, pages, splitter)
         all_chunks.extend(source_chunks)
         logger.info("%s: %d pages -> %d chunks", source.id, len(pages), len(source_chunks))
+
+    download_attack_stix(settings)
 
     logger.info("Loading embedding model %s", settings.embedding_model_name)
     model = SentenceTransformer(settings.embedding_model_name)
