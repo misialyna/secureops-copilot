@@ -228,3 +228,6 @@ node_modules/
 knowledge/raw/
 data/qdrant/
 
+# LangGraph checkpoint DB: local run/session state, not committed.
+data/checkpoints.sqlite*
+

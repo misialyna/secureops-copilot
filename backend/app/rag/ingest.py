@@ -1,7 +1,7 @@
 """Build the local Qdrant knowledge-base index from the sources in sources.py.
 
 Run from the repo root as:
-    PYTHONPATH=backend uv run python -m app.rag.ingest
+    uv run python -m app.rag.ingest
 """
 
 import logging

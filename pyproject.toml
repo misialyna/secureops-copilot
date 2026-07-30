@@ -1,3 +1,10 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend/app"]
+
 [project]
 name = "secureops-copilot"
 version = "0.1.0"
@@ -12,6 +19,11 @@ dependencies = [
     "sentence-transformers",
     "pymupdf",
     "langchain-text-splitters",
+    "langchain-core",
+    "langchain-groq",
+    "langgraph",
+    "langgraph-checkpoint-sqlite",
+    "aiosqlite",
 ]
 
 [dependency-groups]
@@ -35,7 +47,6 @@ target-version = "py312"
 src = ["backend"]
 
 [tool.pytest.ini_options]
-pythonpath = ["backend"]
 testpaths = ["backend/tests"]
 asyncio_mode = "strict"
 markers = [

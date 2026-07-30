@@ -12,3 +12,6 @@ class Settings(BaseSettings):
     qdrant_path: str = "data/qdrant"
     rag_collection_name: str = "knowledge_base"
     embedding_model_name: str = "BAAI/bge-m3"
+
+    groq_model_name: str = "llama-3.3-70b-versatile"
+    checkpoint_db_path: str = "data/checkpoints.sqlite"
