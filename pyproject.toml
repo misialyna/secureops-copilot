@@ -7,15 +7,27 @@ dependencies = [
     "uvicorn[standard]",
     "pydantic",
     "pydantic-settings",
+    "httpx",
+    "qdrant-client",
+    "sentence-transformers",
+    "pymupdf",
+    "langchain-text-splitters",
 ]
 
 [dependency-groups]
 dev = [
     "pytest",
     "pytest-asyncio",
-    "httpx",
     "ruff",
 ]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 100
@@ -26,3 +38,6 @@ src = ["backend"]
 pythonpath = ["backend"]
 testpaths = ["backend/tests"]
 asyncio_mode = "strict"
+markers = [
+    "slow: integration tests that hit the network and/or a real Qdrant index (excluded from CI by default)",
+]
