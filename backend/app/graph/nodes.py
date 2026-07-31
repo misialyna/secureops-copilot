@@ -15,7 +15,14 @@ from app.graph.schemas import ApprovalGateDecision, DiagnosticPlan, IncidentClas
 from app.graph.state import AgentState, ClarificationPair
 from app.rag.retriever import KnowledgeRetriever
 from app.tools.approval import ApprovalDecision, AuditEntry, ProposedAction
-from app.tools.registry import ToolResult, ToolSpec, execute_tool, list_tools
+from app.tools.registry import (
+    PreviewDriftError,
+    ToolResult,
+    ToolSpec,
+    execute_tool,
+    list_tools,
+    preview_tool,
+)
 
 MAX_TOOL_CALLS = 5
 UNTRUSTED_DATA_START = "<untrusted_evidence_data>"
@@ -390,7 +397,11 @@ def build_propose_actions_node(
             return {"proposed_actions": []}
 
         proposed_actions = [
-            ProposedAction(id=uuid4().hex, **draft.model_dump())
+            ProposedAction(
+                id=uuid4().hex,
+                preview=preview_tool(draft.tool_name, draft.args),
+                **draft.model_dump(),
+            )
             for draft in decision.proposed_actions
         ]
         return {"proposed_actions": proposed_actions}
@@ -423,12 +434,16 @@ def build_approval_gate_node() -> Callable[[AgentState], dict]:
 
             if action_decision.approved:
                 try:
+                    if action.preview is not None:
+                        current_preview = preview_tool(action.tool_name, action.args)
+                        if current_preview != action.preview:
+                            raise PreviewDriftError(action.id, action.tool_name)
                     tool_result = execute_tool(
                         action.tool_name, action.args, approval=action_decision
                     )
                     executed = True
                     result_summary = tool_result.summary
-                except PermissionError as exc:
+                except (PermissionError, PreviewDriftError) as exc:
                     executed = False
                     result_summary = str(exc)
             else:

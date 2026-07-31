@@ -42,6 +42,7 @@ docker/
 - Commity w konwencji Conventional Commits (`feat:`, `fix:`, `chore:`, `test:`), po polsku lub angielsku, ale konsekwentnie po angielsku w tym repo.
 - Sekrety TYLKO w `.env` (jest w `.gitignore`). Wzorzec zmiennych w `.env.example`. Nigdy nie wpisuj kluczy do kodu ani do commitów.
 - Nie dodawaj nowych zależności bez zapytania — najpierw zaproponuj i uzasadnij.
+- `assert` tylko w testach. W kodzie produkcyjnym zawsze jawne wyjątki (własna klasa błędu, gdy wołający ma to obsłużyć — nie goły `assert`, który znika przy `python -O` i nie da się go sensownie złapać).
 
 ## Komendy
 

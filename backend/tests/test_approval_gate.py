@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
 
+import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 from langgraph.types import Command
 
+import app.tools.registry as registry_module
 from app.graph.builder import build_graph
 from app.graph.report import IncidentReport
 from app.graph.schemas import (
@@ -15,6 +17,7 @@ from app.graph.schemas import (
 from app.main import _build_response
 from app.rag.retriever import RetrievedChunk
 from app.tools.approval import ApprovalDecision
+from app.tools.registry import ToolResult, ToolSpec, register_tool
 
 
 class FakeRetriever:
@@ -177,3 +180,134 @@ def test_missing_decision_defaults_to_not_approved() -> None:
     entry = resumed["audit_log"][0]
     assert entry.executed is False
     assert entry.decision.approved is False
+
+
+def test_proposed_action_carries_a_preview_of_the_real_commands() -> None:
+    """block_ip is registered with preview_fn=block_ip itself (see app/tools/firewall.py), so
+    the analyst must see the exact commands before deciding — not just the bare IP."""
+    graph = _build(_block_ip_proposal_llm())
+    config = {"configurable": {"thread_id": "preview-thread"}}
+
+    result = graph.invoke({"incident_description": "brute force"}, config=config)
+
+    preview = result["__interrupt__"][0].value["proposed_actions"][0]["preview"]
+    assert preview is not None
+    assert preview["findings"][0]["ufw_command"] == "ufw deny from 45.83.65.12 to any"
+
+
+@pytest.fixture
+def _isolate_registry() -> None:
+    """register_tool() mutates a module-level global shared with the real tools — restore it
+    after the test so a dummy tool registered here never leaks into other test modules."""
+    original = dict(registry_module._REGISTRY)
+    yield
+    registry_module._REGISTRY.clear()
+    registry_module._REGISTRY.update(original)
+
+
+def test_execution_refuses_if_preview_drifted_since_it_was_shown_to_the_analyst(
+    _isolate_registry: None,
+) -> None:
+    """propose_actions calls preview_tool once (persisted as action.preview); approval_gate
+    calls it again right before executing and must refuse to run if the two disagree — this
+    is the safety net for a tool whose preview_fn could ever diverge from what it would
+    actually do (block_ip can't, since it reuses the same function for both — see
+    app/tools/firewall.py — but the check must hold in general). The drift must not crash the
+    whole approval_gate run — it's recorded as a failed, unexecuted audit entry so any other
+    approved actions in the same batch still go through."""
+    calls = {"n": 0}
+
+    def _stateful_preview(**kwargs: object) -> ToolResult:
+        calls["n"] += 1
+        return ToolResult(tool_name="dummy_stateful", summary=f"call {calls['n']}")
+
+    register_tool(
+        ToolSpec(
+            name="dummy_stateful",
+            description="A dummy active tool whose preview changes between calls.",
+            risk_level="active",
+            input_schema={"type": "object", "properties": {}},
+            preview_fn=_stateful_preview,
+        ),
+        _stateful_preview,
+    )
+    approval_llm = RunnableLambda(
+        lambda messages: ApprovalGateDecision.model_validate(
+            {
+                "proposed_actions": [
+                    {
+                        "tool_name": "dummy_stateful",
+                        "args": {},
+                        "justification": "j",
+                        "risk_note": "r",
+                    }
+                ]
+            }
+        )
+    )
+    graph = _build(approval_llm)
+    config = {"configurable": {"thread_id": "drift-thread"}}
+
+    first = graph.invoke({"incident_description": "x"}, config=config)
+    action_id = first["__interrupt__"][0].value["proposed_actions"][0]["id"]
+    approval = ApprovalDecision(
+        action_id=action_id, approved=True, decided_at=datetime.now(UTC)
+    )
+
+    resumed = graph.invoke(Command(resume=[approval.model_dump(mode="json")]), config=config)
+
+    assert "__interrupt__" not in resumed
+    entry = resumed["audit_log"][0]
+    assert entry.executed is False
+    assert action_id in entry.result_summary
+    assert "dummy_stateful" in entry.result_summary
+    assert "no longer matches" in entry.result_summary
+
+
+def test_no_preview_fn_means_no_preview_but_execution_still_works(
+    _isolate_registry: None,
+) -> None:
+    """An active tool with no preview_fn simply has preview=None — the UI falls back to
+    showing args/risk_note only; execution (and the drift check, which is skipped when
+    preview is None) is unaffected."""
+
+    def _dummy_active(**kwargs: object) -> ToolResult:
+        return ToolResult(tool_name="dummy_no_preview", summary="ran fine")
+
+    register_tool(
+        ToolSpec(
+            name="dummy_no_preview",
+            description="A dummy active tool with no preview_fn.",
+            risk_level="active",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        _dummy_active,
+    )
+    approval_llm = RunnableLambda(
+        lambda messages: ApprovalGateDecision.model_validate(
+            {
+                "proposed_actions": [
+                    {
+                        "tool_name": "dummy_no_preview",
+                        "args": {},
+                        "justification": "j",
+                        "risk_note": "r",
+                    }
+                ]
+            }
+        )
+    )
+    graph = _build(approval_llm)
+    config = {"configurable": {"thread_id": "no-preview-thread"}}
+
+    first = graph.invoke({"incident_description": "x"}, config=config)
+    action = first["__interrupt__"][0].value["proposed_actions"][0]
+    assert action["preview"] is None
+
+    approval = ApprovalDecision(
+        action_id=action["id"], approved=True, decided_at=datetime.now(UTC)
+    )
+    resumed = graph.invoke(Command(resume=[approval.model_dump(mode="json")]), config=config)
+
+    assert resumed["audit_log"][0].executed is True
+    assert resumed["audit_log"][0].result_summary == "ran fine"

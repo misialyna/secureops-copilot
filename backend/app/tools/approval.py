@@ -10,6 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.tools.registry import ToolResult
+
 
 class ProposedActionDraft(BaseModel):
     """What an LLM proposes, before a stable id is assigned by the approval_gate node.
@@ -26,6 +28,10 @@ class ProposedActionDraft(BaseModel):
 
 class ProposedAction(ProposedActionDraft):
     id: str
+    preview: ToolResult | None = None
+    """Populated server-side (propose_actions node, via registry.preview_tool) from the same
+    preview_fn that would eventually run the tool for real — never asked of the LLM, so it
+    can't drift from what execution would actually do. None if the tool has no preview_fn."""
 
 
 class ApprovalDecision(BaseModel):

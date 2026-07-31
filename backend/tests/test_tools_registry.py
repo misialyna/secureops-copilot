@@ -10,6 +10,7 @@ from app.tools.registry import (
     execute_tool,
     get_spec,
     list_tools,
+    preview_tool,
     register_tool,
 )
 
@@ -115,3 +116,38 @@ def test_execute_tool_runs_active_tool_with_approved_decision() -> None:
     result = execute_tool("dummy_active", approval=decision)
 
     assert result.summary == "should never run"
+
+
+def test_preview_tool_returns_none_when_the_tool_has_no_preview_fn() -> None:
+    register_tool(
+        ToolSpec(
+            name="dummy_active",
+            description="A dummy active tool for tests.",
+            risk_level="active",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        _dummy_active,
+    )
+
+    assert preview_tool("dummy_active") is None
+
+
+def test_preview_tool_calls_preview_fn_with_no_approval_required() -> None:
+    def _preview(**kwargs: object) -> ToolResult:
+        return ToolResult(tool_name="dummy_active", summary=f"preview of {kwargs}")
+
+    register_tool(
+        ToolSpec(
+            name="dummy_active",
+            description="A dummy active tool for tests.",
+            risk_level="active",
+            input_schema={"type": "object", "properties": {}},
+            preview_fn=_preview,
+        ),
+        _dummy_active,
+    )
+
+    result = preview_tool("dummy_active", {"ip": "1.2.3.4"})
+
+    assert result is not None
+    assert "1.2.3.4" in result.summary

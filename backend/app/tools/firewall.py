@@ -4,6 +4,12 @@ This never executes anything on its own — it only returns ready-to-run command
 iptables, and nft variants), a description of the effect, and a rollback command. Actual
 execution is gated by the human-approval flow: registry.execute_tool() refuses to run any
 risk_level="active" tool without an approved ApprovalDecision, regardless of what calls it.
+
+Because block_ip itself never touches a real firewall — it only ever computes text — it is
+registered as both the tool's `fn` and its `preview_fn` (see ToolSpec below). That means the
+exact same function call produces what an analyst sees before approving and what actually
+gets recorded as executed after approving: there's no second implementation that could drift
+from the first.
 """
 
 from ipaddress import ip_address
@@ -98,6 +104,7 @@ register_tool(
             },
             "required": ["ip"],
         },
+        preview_fn=block_ip,
     ),
     block_ip,
 )
