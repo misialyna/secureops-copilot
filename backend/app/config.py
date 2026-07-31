@@ -26,3 +26,4 @@ class Settings(BaseSettings):
 
     evidence_dir: str = "data/evidence"
     max_evidence_file_size_mb: int = 50
+    drafts_dir: str = "data/drafts"

@@ -5,11 +5,15 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from groq import APIStatusError, GroqError
 from langgraph.types import Command, Interrupt
 from pydantic import BaseModel
 
 from app.config import Settings
+from app.drafts import delete_draft, load_draft, save_draft
 from app.evidence import UnsupportedEvidenceExtension, list_evidence, store_evidence
 from app.graph.builder import build_graph
 from app.graph.checkpointer import get_checkpointer
@@ -17,6 +21,8 @@ from app.graph.schemas import DiagnosticPlan, IncidentClassification
 from app.rag.retriever import RetrievedChunk, get_retriever
 from app.tools.approval import ApprovalDecision, AuditEntry, ProposedAction
 from app.tools.registry import ToolResult
+
+DEV_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 
 class IncidentRequest(BaseModel):
@@ -39,7 +45,7 @@ class ResumeRequest(BaseModel):
 
 class IncidentResponse(BaseModel):
     thread_id: str
-    status: Literal["awaiting_clarification", "awaiting_approval", "completed"]
+    status: Literal["draft", "awaiting_clarification", "awaiting_approval", "completed"]
     pending_questions: list[str] | None = None
     proposed_actions: list[ProposedAction] | None = None
     classification: IncidentClassification | None = None
@@ -96,6 +102,26 @@ def _build_response(
     )
 
 
+async def _current_status(
+    app: FastAPI, settings: Settings, thread_id: str
+) -> tuple[dict[str, Any], Sequence[Interrupt], str]:
+    """(values, interrupts, status) for a thread — the draft store if the incident hasn't
+    been started yet, otherwise graph state. Checking the draft store first means a draft
+    thread never touches `app.state.graph` at all — important because `app.state.graph` is
+    only set up by the lifespan context manager, which tests that only exercise evidence
+    upload/draft creation don't (and shouldn't have to) trigger. Raises 404 if thread_id is
+    unknown to both — i.e. it was never created via POST /incidents."""
+    if load_draft(Path(settings.drafts_dir), thread_id) is not None:
+        return {}, (), "draft"
+
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await app.state.graph.aget_state(config)
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail="Unknown thread_id")
+    status = _build_response(thread_id, snapshot.values, snapshot.interrupts).status
+    return snapshot.values, snapshot.interrupts, status
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = Settings()
@@ -108,6 +134,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     settings = settings or Settings()
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=DEV_CORS_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.exception_handler(GroqError)
+    async def groq_error_handler(request: Request, exc: GroqError) -> JSONResponse:
+        if isinstance(exc, APIStatusError):
+            status_code = exc.status_code
+            if status_code == 429:
+                detail = "The AI model's rate limit was reached — please try again in a few minutes."
+            else:
+                detail = f"The AI model returned an error ({status_code})."
+        else:
+            status_code = 503
+            detail = "Could not reach the AI model — please try again."
+        return JSONResponse(status_code=status_code, content={"detail": detail})
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": settings.app_version}
@@ -119,10 +165,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/incidents")
     async def create_incident(payload: IncidentRequest) -> IncidentResponse:
         thread_id = str(uuid4())
+        save_draft(Path(settings.drafts_dir), thread_id, payload.description)
+        return IncidentResponse(thread_id=thread_id, status="draft")
+
+    @app.post("/incidents/{thread_id}/start")
+    async def start_incident(thread_id: str) -> IncidentResponse:
         config = {"configurable": {"thread_id": thread_id}}
+        snapshot = await app.state.graph.aget_state(config)
+        if snapshot.values:
+            raise HTTPException(
+                status_code=409, detail="This incident has already been started."
+            )
+        description = load_draft(Path(settings.drafts_dir), thread_id)
+        if description is None:
+            raise HTTPException(status_code=404, detail="Unknown thread_id")
+
         result = await app.state.graph.ainvoke(
-            {"incident_description": payload.description}, config=config
+            {"incident_description": description}, config=config
         )
+        delete_draft(Path(settings.drafts_dir), thread_id)
         return _build_response(thread_id, result, result.get("__interrupt__", ()))
 
     @app.post("/incidents/{thread_id}/resume")
@@ -146,11 +207,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/incidents/{thread_id}")
     async def get_incident(thread_id: str) -> IncidentResponse:
-        config = {"configurable": {"thread_id": thread_id}}
-        snapshot = await app.state.graph.aget_state(config)
-        if not snapshot.values:
-            raise HTTPException(status_code=404, detail="Unknown thread_id")
-        return _build_response(thread_id, snapshot.values, snapshot.interrupts)
+        values, interrupts, status = await _current_status(app, settings, thread_id)
+        if status == "draft":
+            return IncidentResponse(thread_id=thread_id, status="draft")
+        return _build_response(thread_id, values, interrupts)
 
     @app.get("/incidents/{thread_id}/report")
     async def get_incident_report(thread_id: str) -> ReportResponse:
@@ -171,6 +231,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/incidents/{thread_id}/evidence")
     async def upload_evidence(thread_id: str, file: UploadFile) -> EvidenceUploadResponse:
+        _, _, status = await _current_status(app, settings, thread_id)
+        if status not in ("draft", "awaiting_clarification"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot upload evidence while the incident is '{status}'.",
+            )
+
         max_bytes = settings.max_evidence_file_size_mb * 1024 * 1024
         contents = await file.read(max_bytes + 1)
         if len(contents) > max_bytes:

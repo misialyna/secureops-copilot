@@ -1,8 +1,11 @@
+from pathlib import Path
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 
+from app.config import Settings
 from app.graph.builder import build_graph
 from app.graph.report import (
     AllowedCitation,
@@ -229,20 +232,23 @@ def test_report_reaches_incident_response() -> None:
 
 
 @pytest.mark.asyncio
-async def test_report_endpoint_returns_markdown_and_warnings() -> None:
+async def test_report_endpoint_returns_markdown_and_warnings(tmp_path: Path) -> None:
     report_llm = RunnableLambda(
         lambda messages: IncidentReport(
             markdown="## Executive summary\nBody with [1] and bogus [42]."
         )
     )
-    app = create_app()
+    app = create_app(settings=Settings(drafts_dir=str(tmp_path / "drafts")))
     app.state.graph = _build(report_llm)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         create_response = await client.post("/incidents", json={"description": "test incident"})
-        assert create_response.json()["status"] == "completed"
+        assert create_response.json()["status"] == "draft"
         thread_id = create_response.json()["thread_id"]
+
+        start_response = await client.post(f"/incidents/{thread_id}/start")
+        assert start_response.json()["status"] == "completed"
 
         report_response = await client.get(f"/incidents/{thread_id}/report")
         missing_response = await client.get("/incidents/unknown-thread/report")

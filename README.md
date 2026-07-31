@@ -274,3 +274,18 @@ A complete report (no missing information) skips straight from `classify` to `re
 and if `propose_actions` proposes nothing, the run finishes as `status: "completed"` without ever
 pausing for approval — `report` still runs either way, so the final response always includes a
 Markdown report.
+
+## Known limitations
+
+**Drafts and evidence files are ephemeral.** Incident drafts (JSON files, created by
+`POST /incidents` before analysis starts) and uploaded evidence files live on the container's
+local disk, so on the free Hugging Face Spaces tier a Space restart deletes them. Graph state
+itself — sessions, checkpoints, the audit log — is safe in Postgres and survives restarts; only
+the pre-analysis draft window is at risk, and in practice that window is a matter of minutes
+between creating a draft and calling `POST /incidents/{thread_id}/start`. This is an accepted
+trade-off for a demo deployment. In production: drafts would move to a Postgres table, and
+evidence files to object storage (e.g. S3) referenced from the database.
+
+**No authentication.** The app has no auth layer — it's a public demo, and `thread_id` is the only
+"secret" protecting a session. Also a deliberate scope cut for this stage; a production deployment
+would put an auth layer in front of it.
