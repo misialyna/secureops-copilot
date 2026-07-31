@@ -193,12 +193,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=400, detail="Provide either 'answers' or 'approvals', not both."
             )
         if payload.approvals is not None:
+            expected_status = "awaiting_approval"
             resume_value: Any = [a.model_dump(mode="json") for a in payload.approvals]
         elif payload.answers is not None:
+            expected_status = "awaiting_clarification"
             resume_value = payload.answers
         else:
             raise HTTPException(
                 status_code=400, detail="Provide either 'answers' or 'approvals'."
+            )
+
+        # Guards against resuming a thread that isn't paused the way this payload assumes —
+        # e.g. a duplicate/retried request arriving after an earlier resume already moved the
+        # thread past this interrupt. Without this, the second call would feed a stale resume
+        # value into whatever *other* interrupt() the thread is now sitting at (a different
+        # node, expecting a different shape), which fails deep inside that node instead of
+        # here. This is a known, accepted TOCTOU window — the status check and the actual
+        # ainvoke() below are not atomic, so two requests racing closely enough could still
+        # both pass this check before either resumes the graph. Closing that fully would need
+        # a per-thread lock; not worth it for the actual traffic this endpoint sees, but this
+        # check still turns the common case (a stale/duplicate request arriving after an
+        # earlier one already completed) into a clean 409 instead of a raw 500.
+        _, _, current_status = await _current_status(app, settings, thread_id)
+        if current_status != expected_status:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot resume with {'approvals' if payload.approvals is not None else 'answers'} "
+                    f"while the incident is '{current_status}' (expected '{expected_status}')."
+                ),
             )
 
         config = {"configurable": {"thread_id": thread_id}}

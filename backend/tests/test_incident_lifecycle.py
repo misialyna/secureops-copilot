@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -182,3 +183,111 @@ async def test_evidence_upload_allowed_while_awaiting_clarification(tmp_path: Pa
         )
 
     assert upload_response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_resume_with_approvals_while_awaiting_clarification_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """Guards against a stale/duplicate resume call reaching the wrong interrupt — e.g. a
+    retried request arriving after an earlier resume already moved the thread past clarify.
+    Without this check, the payload would be fed into whatever *other* interrupt() the thread
+    is now sitting at, failing deep inside that node instead of here with a clean 409."""
+    classify_llm = RunnableLambda(
+        lambda messages: IncidentClassification(
+            category="other",
+            severity="low",
+            confidence=0.3,
+            reasoning="unclear",
+            missing_info=["What system is affected?"],
+        )
+    )
+    settings = Settings(
+        evidence_dir=str(tmp_path / "evidence"), drafts_dir=str(tmp_path / "drafts")
+    )
+    app = create_app(settings=settings)
+    app.state.graph = build_graph(
+        classify_llm=classify_llm,
+        tools_llm=RunnableLambda(lambda m: AIMessage(content="", tool_calls=[])),
+        plan_llm=RunnableLambda(
+            lambda m: DiagnosticPlan(
+                steps=[DiagnosticStep(description="d", rationale="r", expected_evidence="e", priority=1)]
+            )
+        ),
+        approval_llm=RunnableLambda(lambda m: ApprovalGateDecision(proposed_actions=[])),
+        report_llm=RunnableLambda(lambda m: IncidentReport(markdown="# r")),
+        retriever=FakeRetriever(),
+    )
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        create_response = await client.post("/incidents", json={"description": "something odd"})
+        thread_id = create_response.json()["thread_id"]
+        await client.post(f"/incidents/{thread_id}/start")
+
+        response = await client.post(
+            f"/incidents/{thread_id}/resume",
+            json={
+                "approvals": [
+                    {
+                        "action_id": "does-not-exist",
+                        "approved": True,
+                        "decided_at": datetime.now(UTC).isoformat(),
+                    }
+                ]
+            },
+        )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_resume_with_answers_while_awaiting_approval_is_rejected(tmp_path: Path) -> None:
+    app = _app_for(tmp_path)
+    app.state.graph = build_graph(
+        classify_llm=RunnableLambda(
+            lambda m: IncidentClassification(
+                category="unauthorized_access",
+                severity="high",
+                confidence=0.9,
+                reasoning="brute force",
+                missing_info=[],
+            )
+        ),
+        tools_llm=RunnableLambda(lambda m: AIMessage(content="", tool_calls=[])),
+        plan_llm=RunnableLambda(
+            lambda m: DiagnosticPlan(
+                steps=[DiagnosticStep(description="d", rationale="r", expected_evidence="e", priority=1)]
+            )
+        ),
+        approval_llm=RunnableLambda(
+            lambda m: ApprovalGateDecision.model_validate(
+                {
+                    "proposed_actions": [
+                        {
+                            "tool_name": "block_ip",
+                            "args": {"ip": "45.83.65.12"},
+                            "justification": "j",
+                            "risk_note": "r",
+                        }
+                    ]
+                }
+            )
+        ),
+        report_llm=RunnableLambda(lambda m: IncidentReport(markdown="# r")),
+        retriever=FakeRetriever(),
+    )
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        create_response = await client.post("/incidents", json={"description": "brute force"})
+        thread_id = create_response.json()["thread_id"]
+        start_response = await client.post(f"/incidents/{thread_id}/start")
+        assert start_response.json()["status"] == "awaiting_approval"
+
+        response = await client.post(
+            f"/incidents/{thread_id}/resume",
+            json={"answers": {"some question": "some answer"}},
+        )
+
+    assert response.status_code == 409
