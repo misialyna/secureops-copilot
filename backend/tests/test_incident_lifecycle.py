@@ -291,3 +291,121 @@ async def test_resume_with_answers_while_awaiting_approval_is_rejected(tmp_path:
         )
 
     assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_report_node_failure_after_last_interrupt_is_reported_as_failed(
+    tmp_path: Path,
+) -> None:
+    """A thread with no pending interrupt is *not* necessarily "completed" — e.g. Groq's rate
+    limit (which with_retry deliberately never retries, see app/graph/retry.py) can make the
+    report node raise after approval_gate already ran and cleared the last interrupt. That
+    must surface as status="failed", not a "completed" response with a null report."""
+
+    def _raise(messages: object) -> None:
+        raise RuntimeError("simulated Groq failure in report node")
+
+    settings = Settings(
+        evidence_dir=str(tmp_path / "evidence"), drafts_dir=str(tmp_path / "drafts")
+    )
+    app = create_app(settings=settings)
+    app.state.graph = build_graph(
+        classify_llm=RunnableLambda(
+            lambda m: IncidentClassification(
+                category="phishing",
+                severity="low",
+                confidence=0.8,
+                reasoning="Isolated phishing click",
+                missing_info=[],
+            )
+        ),
+        tools_llm=RunnableLambda(lambda m: AIMessage(content="", tool_calls=[])),
+        plan_llm=RunnableLambda(
+            lambda m: DiagnosticPlan(
+                steps=[DiagnosticStep(description="d", rationale="r", expected_evidence="e", priority=1)]
+            )
+        ),
+        approval_llm=RunnableLambda(lambda m: ApprovalGateDecision(proposed_actions=[])),
+        report_llm=RunnableLambda(_raise),
+        retriever=FakeRetriever(),
+    )
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        create_response = await client.post("/incidents", json={"description": "x"})
+        thread_id = create_response.json()["thread_id"]
+
+        with pytest.raises(RuntimeError, match="simulated Groq failure"):
+            await client.post(f"/incidents/{thread_id}/start")
+
+        get_response = await client.get(f"/incidents/{thread_id}")
+
+    assert get_response.status_code == 200
+    body = get_response.json()
+    assert body["status"] == "failed"
+    assert body["report"] is None
+
+
+@pytest.mark.asyncio
+async def test_real_completed_status_still_requires_a_report(tmp_path: Path) -> None:
+    """Regression guard for the fix above: a normal successful run (report node returns a
+    real report) must still be reported as "completed", not "failed"."""
+    app = _app_for(tmp_path)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        create_response = await client.post("/incidents", json={"description": "x"})
+        thread_id = create_response.json()["thread_id"]
+        start_response = await client.post(f"/incidents/{thread_id}/start")
+
+    body = start_response.json()
+    assert body["status"] == "completed"
+    assert body["report"] is not None
+
+
+@pytest.mark.asyncio
+async def test_classify_node_failure_via_start_is_reported_as_failed_not_404(
+    tmp_path: Path,
+) -> None:
+    """Same "failed" contract, but for a crash in the very *first* node instead of the last —
+    draft -> start, where classify itself raises before ever writing state. This is a stricter
+    check than the report-failure test above: there, classify/tools/plan/approval_gate had all
+    already succeeded and checkpointed real state before the crash, so it was never in doubt
+    that snapshot.values would be non-empty. Here, nothing has ever been checkpointed for this
+    thread_id when it fails — _current_status's `if not snapshot.values: raise 404` guard
+    could plausibly fire instead of "failed", if LangGraph doesn't checkpoint the initial input
+    before the first node runs. Confirmed empirically below rather than assumed."""
+
+    def _raise(messages: object) -> None:
+        raise RuntimeError("simulated Groq failure in classify node")
+
+    settings = Settings(
+        evidence_dir=str(tmp_path / "evidence"), drafts_dir=str(tmp_path / "drafts")
+    )
+    app = create_app(settings=settings)
+    app.state.graph = build_graph(
+        classify_llm=RunnableLambda(_raise),
+        tools_llm=RunnableLambda(lambda m: AIMessage(content="", tool_calls=[])),
+        plan_llm=RunnableLambda(
+            lambda m: DiagnosticPlan(
+                steps=[DiagnosticStep(description="d", rationale="r", expected_evidence="e", priority=1)]
+            )
+        ),
+        approval_llm=RunnableLambda(lambda m: ApprovalGateDecision(proposed_actions=[])),
+        report_llm=RunnableLambda(lambda m: IncidentReport(markdown="# r")),
+        retriever=FakeRetriever(),
+    )
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        create_response = await client.post("/incidents", json={"description": "x"})
+        thread_id = create_response.json()["thread_id"]
+
+        with pytest.raises(RuntimeError, match="simulated Groq failure in classify"):
+            await client.post(f"/incidents/{thread_id}/start")
+
+        get_response = await client.get(f"/incidents/{thread_id}")
+
+    assert get_response.status_code == 200
+    body = get_response.json()
+    assert body["status"] == "failed"

@@ -45,7 +45,7 @@ class ResumeRequest(BaseModel):
 
 class IncidentResponse(BaseModel):
     thread_id: str
-    status: Literal["draft", "awaiting_clarification", "awaiting_approval", "completed"]
+    status: Literal["draft", "awaiting_clarification", "awaiting_approval", "completed", "failed"]
     pending_questions: list[str] | None = None
     proposed_actions: list[ProposedAction] | None = None
     classification: IncidentClassification | None = None
@@ -89,9 +89,15 @@ def _build_response(
         return IncidentResponse(
             thread_id=thread_id, status="awaiting_clarification", pending_questions=questions
         )
+    # No pending interrupt does *not* mean the run finished successfully — a thread can also
+    # land here because report generation raised (e.g. Groq's rate limit, which with_retry
+    # doesn't retry — see app/graph/retry.py) after approval_gate already ran and cleared the
+    # last interrupt. Without this check, that half-finished state was indistinguishable from
+    # a real "completed" response: same shape, just a null `report`.
+    status = "completed" if values.get("report") is not None else "failed"
     return IncidentResponse(
         thread_id=thread_id,
-        status="completed",
+        status=status,
         classification=values.get("classification"),
         plan=values.get("plan"),
         sources=values.get("retrieved_chunks"),
@@ -180,10 +186,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if description is None:
             raise HTTPException(status_code=404, detail="Unknown thread_id")
 
+        # Deleted before invoking, not after: once we're about to hand the description to the
+        # graph, the draft's job is done regardless of whether this invocation succeeds. If it
+        # raised (e.g. Groq's rate limit in a later node — see the "failed" status above) and
+        # the draft file were still here, subsequent GETs would keep reporting "draft" even
+        # though the graph already has real (partial) state for this thread_id.
+        delete_draft(Path(settings.drafts_dir), thread_id)
         result = await app.state.graph.ainvoke(
             {"incident_description": description}, config=config
         )
-        delete_draft(Path(settings.drafts_dir), thread_id)
         return _build_response(thread_id, result, result.get("__interrupt__", ()))
 
     @app.post("/incidents/{thread_id}/resume")

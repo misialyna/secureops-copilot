@@ -289,3 +289,13 @@ evidence files to object storage (e.g. S3) referenced from the database.
 **No authentication.** The app has no auth layer — it's a public demo, and `thread_id` is the only
 "secret" protecting a session. Also a deliberate scope cut for this stage; a production deployment
 would put an auth layer in front of it.
+
+**A thread can end up `status: "failed"`.** If a node fails after the last interrupt has already
+been cleared (most commonly: Groq's rate limit, which `with_retry` deliberately does not retry —
+see `app/graph/retry.py`), there is no interrupt left to resume and no report to show, so the API
+reports `"failed"` rather than a misleading `"completed"` with an empty report. Classification,
+plan, and the audit log up to that point are preserved and still returned. There is currently no
+way to resume a `"failed"` thread from where it stopped — starting a new incident is the only
+option. A proper recovery path (re-running just the failed node from its last good checkpoint) is
+planned for the observability stage, alongside the Langfuse integration, where failures like this
+will need to be traced anyway.

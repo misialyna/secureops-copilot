@@ -44,6 +44,14 @@ export function deriveStages(
     done.add('plan')
   } else if (status === 'completed') {
     for (const id of STAGE_ORDER) done.add(id)
+  } else if (status === 'failed') {
+    // Whatever the response still carries reflects real progress made before the crash —
+    // e.g. classification/plan/audit_log can all be present even though report never ran.
+    if (incident?.classification) done.add('classify')
+    if (incident?.sources) done.add('knowledge')
+    if (incident?.tool_results) done.add('tools')
+    if (incident?.plan) done.add('plan')
+    if (incident?.audit_log) done.add('approvals')
   }
 
   if (pending === 'start' || pending === 'resumeAnswers') {

@@ -69,6 +69,12 @@ export const strings = {
   loadingStarting: 'Trwa klasyfikacja i analiza — może to potrwać kilkanaście sekund...',
   loadingFinalizing: 'Wykonywanie decyzji i generowanie raportu...',
   loadingUploading: 'Wysyłanie pliku...',
+
+  failedHeading: 'Analiza przerwana',
+  failedMessage:
+    'Analiza tego zgłoszenia została przerwana w trakcie działania (np. przez limit modelu) ' +
+    'i nie zostanie dokończona automatycznie. Sesja i dotychczasowy dziennik decyzji są ' +
+    'zachowane — widoczne w prawej kolumnie. Aby kontynuować, załóż nowe zgłoszenie.',
 } as const
 
 export type StringKey = keyof typeof strings

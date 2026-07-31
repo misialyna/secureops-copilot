@@ -4,6 +4,7 @@ import { ClarificationForm } from './components/ClarificationForm'
 import { ClassificationCard } from './components/ClassificationCard'
 import { DiagnosticPlanView } from './components/DiagnosticPlanView'
 import { ErrorBanner } from './components/ErrorBanner'
+import { FailedView } from './components/FailedView'
 import { NewCaseForm } from './components/NewCaseForm'
 import { ReportView } from './components/ReportView'
 import { ReportWarningsBadge } from './components/ReportWarningsBadge'
@@ -40,8 +41,8 @@ function App() {
         </h1>
       </header>
 
-      <main className="mx-auto grid max-w-6xl grid-cols-1 gap-4 p-6 lg:grid-cols-[1fr_320px]">
-        <div className="space-y-4">
+      <main className="mx-auto grid max-w-6xl grid-cols-1 gap-4 p-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0 space-y-4">
           {error && <ErrorBanner message={error} onDismiss={clearError} />}
 
           {pending === 'restore' && <Spinner label={strings.loadingRestoring} />}
@@ -86,6 +87,8 @@ function App() {
           {incident?.status === 'completed' && incident.report && (
             <ReportView markdown={incident.report} />
           )}
+
+          {incident?.status === 'failed' && <FailedView />}
         </div>
 
         <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">

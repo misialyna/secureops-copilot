@@ -21,6 +21,7 @@ export type IncidentStatus =
   | "awaiting_clarification"
   | "awaiting_approval"
   | "completed"
+  | "failed"
 
 export interface IncidentClassification {
   category: IncidentCategory
