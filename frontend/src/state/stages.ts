@@ -1,0 +1,66 @@
+import type { IncidentResponse } from '../api/types'
+import type { PendingAction } from './useIncidentSession'
+
+export type StageId = 'classify' | 'knowledge' | 'questions' | 'tools' | 'plan' | 'approvals' | 'report'
+export type StageStatus = 'pending' | 'active' | 'done'
+
+export interface StageInfo {
+  id: StageId
+  status: StageStatus
+}
+
+const STAGE_ORDER: StageId[] = [
+  'classify',
+  'knowledge',
+  'questions',
+  'tools',
+  'plan',
+  'approvals',
+  'report',
+]
+
+/**
+ * The API only ever reports one of four coarse statuses (draft / awaiting_clarification /
+ * awaiting_approval / completed) — it has no concept of "which graph node is running right
+ * now". This derives a best-effort, coarse-grained stepper from that plus which request (if
+ * any) is currently in flight: a whole group of stages is shown as "active" together while a
+ * single long-running call (e.g. /start, which runs classify through plan in one shot) is
+ * pending, since the frontend genuinely has no finer-grained signal than "waiting".
+ */
+export function deriveStages(
+  incident: IncidentResponse | null,
+  pending: PendingAction,
+): StageInfo[] {
+  const done = new Set<StageId>()
+  const active = new Set<StageId>()
+  const status = incident?.status
+
+  if (status === 'awaiting_clarification') {
+    done.add('classify')
+  } else if (status === 'awaiting_approval') {
+    done.add('classify')
+    done.add('knowledge')
+    done.add('tools')
+    done.add('plan')
+  } else if (status === 'completed') {
+    for (const id of STAGE_ORDER) done.add(id)
+  }
+
+  if (pending === 'start' || pending === 'resumeAnswers') {
+    for (const id of ['classify', 'knowledge', 'tools', 'plan'] as StageId[]) {
+      if (!done.has(id)) active.add(id)
+    }
+  } else if (pending === 'resumeApprovals') {
+    active.add('approvals')
+    active.add('report')
+  } else if (status === 'awaiting_clarification') {
+    active.add('questions')
+  } else if (status === 'awaiting_approval') {
+    active.add('approvals')
+  }
+
+  return STAGE_ORDER.map((id) => ({
+    id,
+    status: done.has(id) ? 'done' : active.has(id) ? 'active' : 'pending',
+  }))
+}
