@@ -342,3 +342,10 @@ way to resume a `"failed"` thread from where it stopped — starting a new incid
 option. A proper recovery path (re-running just the failed node from its last good checkpoint) is
 planned for the observability stage, alongside the Langfuse integration, where failures like this
 will need to be traced anyway.
+
+**No automated tests for frontend interaction logic.** There is no test harness for the frontend
+(no Vitest/React Testing Library installed) — a deliberate, deferred decision from Etap 7 (the UI
+was still expected to change; see the CI section). This means things like `useIncidentSession`'s
+`reset()` (the "Nowe zgłoszenie" navigation) are currently verified only by hand, not by an
+automated test. Component/interaction tests are planned for the evaluation stage alongside E2E
+coverage, not added ad hoc per feature.

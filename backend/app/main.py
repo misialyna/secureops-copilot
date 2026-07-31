@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -22,6 +23,8 @@ from app.graph.schemas import DiagnosticPlan, IncidentClassification
 from app.rag.retriever import RetrievedChunk, get_retriever
 from app.tools.approval import ApprovalDecision, AuditEntry, ProposedAction
 from app.tools.registry import ToolResult
+
+logger = logging.getLogger(__name__)
 
 DEV_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
@@ -112,6 +115,19 @@ def _build_response(
     )
 
 
+def _rate_limit_detail(error_message: str) -> str:
+    """Distinguish a daily vs per-minute Groq rate limit from the error message text. The
+    response headers alone aren't reliable for this: confirmed by hand during the Etap 7
+    acceptance session that x-ratelimit-remaining-tokens can report a full per-minute bucket
+    even when it was actually the *daily* (TPD) limit that tripped the 429."""
+    lowered = error_message.lower()
+    if "per day" in lowered or "tpd" in lowered or "rpd" in lowered:
+        return "Dzienny limit modelu został wyczerpany — spróbuj ponownie jutro."
+    if "per minute" in lowered or "tpm" in lowered or "rpm" in lowered:
+        return "Chwilowy limit modelu został osiągnięty — spróbuj ponownie za minutę."
+    return "Limit modelu został osiągnięty — spróbuj ponownie później."
+
+
 async def _current_status(
     app: FastAPI, settings: Settings, thread_id: str
 ) -> tuple[dict[str, Any], Sequence[Interrupt], str]:
@@ -153,13 +169,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(GroqError)
     async def groq_error_handler(request: Request, exc: GroqError) -> JSONResponse:
+        error_message = getattr(exc, "message", str(exc))
         if isinstance(exc, APIStatusError):
             status_code = exc.status_code
+            body = exc.body if isinstance(exc.body, dict) else {}
+            body_message = body.get("error", {}).get("message") if isinstance(body, dict) else None
+            error_message = body_message or error_message
+
+            headers = getattr(exc.response, "headers", None)
+            rate_limit_headers = (
+                {
+                    k: v
+                    for k, v in headers.items()
+                    if k.lower().startswith("x-ratelimit") or k.lower() == "retry-after"
+                }
+                if headers is not None
+                else {}
+            )
+            logger.warning(
+                "Groq API error (status=%s): %s | rate-limit headers: %s",
+                status_code,
+                error_message,
+                rate_limit_headers,
+            )
+
             if status_code == 429:
-                detail = "The AI model's rate limit was reached — please try again in a few minutes."
+                detail = _rate_limit_detail(error_message)
             else:
                 detail = f"The AI model returned an error ({status_code})."
         else:
+            logger.warning("Groq API connection error: %s", error_message)
             status_code = 503
             detail = "Could not reach the AI model — please try again."
         return JSONResponse(status_code=status_code, content={"detail": detail})

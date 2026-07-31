@@ -7,6 +7,7 @@ import type { StageId } from '../state/stages'
  */
 export const strings = {
   appTitle: 'SecureOps Copilot',
+  newIncidentButton: 'Nowe zgłoszenie',
 
   errorGeneric: 'Wystąpił nieoczekiwany błąd. Spróbuj ponownie.',
   errorRateLimited: 'Limit modelu został osiągnięty — spróbuj ponownie za kilka minut.',

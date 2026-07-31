@@ -39,7 +39,10 @@ function writeThreadToUrl(threadId: string | null): void {
 
 function describeError(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.status === 429) return strings.errorRateLimited
+    // 429 detail is worth relaying as-is: the backend now distinguishes a daily vs. a
+    // per-minute Groq rate limit in its message (see _rate_limit_detail in app/main.py) —
+    // overriding it with one fixed string here would throw that distinction away.
+    if (err.status === 429) return err.message || strings.errorRateLimited
     if (err.status === 404) return strings.errorNotFound
     if (err.status === 409) return strings.errorConflict
     return err.message || strings.errorGeneric
@@ -162,6 +165,17 @@ export function useIncidentSession() {
 
   const clearError = useCallback(() => setError(null), [])
 
+  // Back to the new-case screen: clears the thread from state (the effect above then strips
+  // ?thread= from the URL to match). The only way back in previously — editing the URL by
+  // hand — was never going to be discovered by anyone (ZNALEZISKO #3, acceptance session).
+  const reset = useCallback(() => {
+    setThreadId(null)
+    setIncident(null)
+    setEvidenceFiles([])
+    setPending(null)
+    setError(null)
+  }, [])
+
   return {
     threadId,
     incident,
@@ -174,5 +188,6 @@ export function useIncidentSession() {
     submitAnswers,
     submitApprovals,
     clearError,
+    reset,
   }
 }

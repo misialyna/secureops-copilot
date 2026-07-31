@@ -28,6 +28,7 @@ function App() {
     submitAnswers,
     submitApprovals,
     clearError,
+    reset,
   } = useIncidentSession()
 
   const busy = pending !== null
@@ -35,10 +36,19 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
-      <header className="border-b border-slate-800 px-6 py-4">
+      <header className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
         <h1 className="text-lg font-semibold tracking-tight text-slate-100">
           {strings.appTitle}
         </h1>
+        {threadId && (
+          <button
+            type="button"
+            onClick={reset}
+            className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-200 hover:bg-slate-700"
+          >
+            {strings.newIncidentButton}
+          </button>
+        )}
       </header>
 
       <main className="mx-auto grid max-w-6xl grid-cols-1 gap-4 p-6 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -88,7 +98,7 @@ function App() {
             <ReportView markdown={incident.report} />
           )}
 
-          {incident?.status === 'failed' && <FailedView />}
+          {incident?.status === 'failed' && <FailedView onReset={reset} />}
         </div>
 
         <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
