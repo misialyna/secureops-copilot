@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from groq import APIStatusError, GroqError
 from langgraph.types import Command, Interrupt
 from pydantic import BaseModel
@@ -23,6 +24,9 @@ from app.tools.approval import ApprovalDecision, AuditEntry, ProposedAction
 from app.tools.registry import ToolResult
 
 DEV_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+# backend/app/main.py -> parents[2] is the repo root.
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
 class IncidentRequest(BaseModel):
@@ -294,6 +298,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def get_incident_evidence(thread_id: str) -> EvidenceListResponse:
         evidence_dir = Path(settings.evidence_dir) / thread_id
         return EvidenceListResponse(thread_id=thread_id, files=list_evidence(evidence_dir))
+
+    # Mounted last so it never shadows an API route above: FastAPI matches routes in
+    # registration order, and a mount at "/" would otherwise catch everything. Only mounted
+    # if the frontend has actually been built (`npm run build` -> frontend/dist) — in dev mode
+    # (Vite's own dev server) and in the test suite, that directory doesn't exist, and
+    # StaticFiles(directory=...) raises at construction time if it's missing.
+    if FRONTEND_DIST.is_dir():
+        app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
 
     return app
 

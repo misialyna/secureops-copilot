@@ -14,6 +14,49 @@ action requiring human approval and generates a final report.
 - Lint: `uv run ruff check .` (fix: `uv run ruff check --fix .`)
 - Dev server: `uv run uvicorn app.main:app --reload --app-dir backend`
 
+## Frontend
+
+A React + TypeScript + Vite "analyst console" (`frontend/`, dark theme, no client-side router —
+a single page keyed on `thread_id`) covers the full incident lifecycle: submitting a report,
+answering clarifying questions, uploading evidence, reviewing the diagnostic plan, approving or
+rejecting proposed actions (with a preview of the actual generated commands), and reading the
+final report. `thread_id` is kept in the URL (`?thread=...`), so refreshing the page mid-session
+restores exactly where it left off.
+
+![Frontend screenshot placeholder — replace with an actual screenshot](docs/frontend-screenshot.png)
+
+### Dev mode (two processes)
+
+```bash
+# terminal 1 — backend
+uv run uvicorn app.main:app --reload --app-dir backend
+
+# terminal 2 — frontend
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. Vite's dev server proxies `/incidents`, `/search`, and `/health` to
+`http://127.0.0.1:8000` (see `frontend/vite.config.ts`), so the frontend code always calls the API
+with relative paths — no CORS configuration needed on the client side (the backend's
+`CORSMiddleware` allows the Vite origin regardless, for direct API calls e.g. from `/docs`).
+
+### Production mode (one process)
+
+```bash
+cd frontend
+npm run build   # -> frontend/dist
+cd ..
+uv run uvicorn app.main:app --app-dir backend
+```
+
+With `frontend/dist` present, FastAPI serves it directly at `/` (`StaticFiles`, `html=True`) —
+the API keeps all its existing paths (`/incidents`, `/health`, ...) untouched, since the static
+mount is registered last and only ever catches requests no API route already matched. If
+`frontend/dist` doesn't exist (e.g. a fresh checkout before running `npm run build`), the mount
+is skipped entirely rather than failing at startup.
+
 ## Knowledge base
 
 The RAG knowledge base is built from two public U.S. government incident-response documents,
