@@ -237,3 +237,8 @@ data/evidence/
 # Incident drafts (description saved before the graph is started), not committed.
 data/drafts/
 
+# Sample/fixture log files are committed test data, not runtime logs — the generic *.log
+# pattern above (from the Django section) would otherwise silently swallow them.
+!demo/*.log
+!eval/fixtures/*.log
+
