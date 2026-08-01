@@ -23,7 +23,18 @@ rejecting proposed actions (with a preview of the actual generated commands), an
 final report. `thread_id` is kept in the URL (`?thread=...`), so refreshing the page mid-session
 restores exactly where it left off.
 
-![Frontend screenshot placeholder — replace with an actual screenshot](docs/frontend-screenshot.png)
+![New incident screen — description, evidence upload, and the stage stepper](docs/screenshot-new-incident.png)
+
+<details>
+<summary>More screenshots (approval panel, final report)</summary>
+
+![Approval panel with the generated block_ip commands previewed before any decision](docs/screenshot-approval.png)
+*Approval panel — the analyst sees the actual ufw/iptables/nft commands before approving or rejecting.*
+
+![Rendered final incident report with the diagnostic plan and audit log](docs/screenshot-report.png)
+*Diagnostic plan, audit log, and the final Markdown report for a completed incident.*
+
+</details>
 
 ### Dev mode (two processes)
 
