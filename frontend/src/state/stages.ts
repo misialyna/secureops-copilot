@@ -30,6 +30,7 @@ const STAGE_ORDER: StageId[] = [
 export function deriveStages(
   incident: IncidentResponse | null,
   pending: PendingAction,
+  sawClarification = false,
 ): StageInfo[] {
   const done = new Set<StageId>()
   const active = new Set<StageId>()
@@ -52,6 +53,14 @@ export function deriveStages(
     if (incident?.tool_results) done.add('tools')
     if (incident?.plan) done.add('plan')
     if (incident?.audit_log) done.add('approvals')
+  }
+
+  // ZNALEZISKO #10: once past awaiting_clarification, nothing in `incident` says clarification
+  // ever happened — sawClarification is the caller's client-side memory of having seen that
+  // status earlier this session (see useIncidentSession). Applied after the branches above so
+  // it can't be overridden by them.
+  if (sawClarification && status && status !== 'awaiting_clarification' && status !== 'draft') {
+    done.add('questions')
   }
 
   if (pending === 'start' || pending === 'resumeAnswers') {

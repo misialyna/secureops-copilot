@@ -107,6 +107,17 @@ def _format_allowed_citations(allowed: list[AllowedCitation]) -> str:
     return "\n".join(f"[{c.n}] {c.title} — page {c.page} (source_id: {c.source_id})" for c in allowed)
 
 
+def _format_tool_args(args: dict[str, Any]) -> str:
+    """key=value, not Python's dict repr — this text is fed to report_llm as something to
+    paraphrase into prose, and the LLM sometimes copies its input too literally (ZNALEZISKO #12,
+    observed live: a report's "Podjęte działania" section read "block_ip({'ip': 'nie dotyczy'})"
+    verbatim). Plain key=value pairs can't leak Python syntax into the report even when copied
+    as-is."""
+    if not args:
+        return "no arguments"
+    return ", ".join(f"{key}={value}" for key, value in args.items())
+
+
 def _format_audit_log(state: AgentState) -> str:
     if not state.audit_log:
         return "No active actions were proposed or taken."
@@ -114,9 +125,13 @@ def _format_audit_log(state: AgentState) -> str:
     for entry in state.audit_log:
         status = "approved and executed" if entry.executed else "NOT executed"
         comment = f", analyst comment: {entry.decision.comment}" if entry.decision.comment else ""
+        # rstrip: entry.action.justification is itself LLM-generated and almost always already
+        # ends with a period — without this, the line reads "...justification text.." (ZNALEZISKO
+        # #12, observed live).
+        justification = entry.action.justification.rstrip(".")
         lines.append(
-            f"- Proposed action: {entry.action.tool_name}({entry.action.args}). "
-            f"Justification: {entry.action.justification}. "
+            f"- Proposed action: {entry.action.tool_name} ({_format_tool_args(entry.action.args)}). "
+            f"Justification: {justification}. "
             f"Decision: approved={entry.decision.approved}{comment}. "
             f"Status: {status}. Result: {entry.result_summary}"
         )

@@ -22,6 +22,7 @@ function App() {
     evidenceFiles,
     pending,
     error,
+    sawClarification,
     submitDraft,
     addEvidence,
     start,
@@ -32,7 +33,7 @@ function App() {
   } = useIncidentSession()
 
   const busy = pending !== null
-  const stages = deriveStages(incident, pending)
+  const stages = deriveStages(incident, pending, sawClarification)
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">

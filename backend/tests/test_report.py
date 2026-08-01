@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from app.graph.report import (
     IncidentReport,
     _build_allowed_citations,
     _build_references_section,
+    _format_audit_log,
     _validate_and_strip_citations,
 )
 from app.graph.schemas import (
@@ -24,6 +26,7 @@ from app.graph.schemas import (
 from app.graph.state import AgentState
 from app.main import _build_response, create_app
 from app.rag.retriever import RetrievedChunk
+from app.tools.approval import ApprovalDecision, AuditEntry, ProposedAction
 
 
 class FakeRetriever:
@@ -158,6 +161,43 @@ def test_build_references_section_contains_exactly_the_used_citations() -> None:
 
 def test_build_references_section_empty_when_nothing_cited() -> None:
     assert _build_references_section(set(), {}) == ""
+
+
+def _audit_entry(tool_args: dict, justification: str) -> AuditEntry:
+    action = ProposedAction(
+        id="a1", tool_name="block_ip", args=tool_args, justification=justification, risk_note="r"
+    )
+    decision = ApprovalDecision(action_id="a1", approved=True, decided_at=datetime.now(UTC))
+    return AuditEntry(
+        action=action,
+        decision=decision,
+        executed=True,
+        result_summary="Invalid IP address: 'nie dotyczy'",
+        timestamp=datetime.now(UTC),
+    )
+
+
+def test_format_audit_log_never_leaks_python_dict_repr() -> None:
+    """ZNALEZISKO #12 (observed live during Etap 8 evaluation): report_llm sometimes copies its
+    input too literally, and Python's dict repr (`{'ip': 'nie dotyczy'}`) leaking into a report
+    reads like broken output. _format_audit_log's input text must never contain that syntax,
+    regardless of what report_llm then does with it."""
+    state = AgentState(
+        incident_description="x",
+        audit_log=[_audit_entry({"ip": "nie dotyczy"}, "Brak konkretnego adresu IP.")],
+    )
+    formatted = _format_audit_log(state)
+    assert "{'ip'" not in formatted
+    assert "ip=nie dotyczy" in formatted
+
+
+def test_format_audit_log_does_not_double_the_justification_period() -> None:
+    state = AgentState(
+        incident_description="x",
+        audit_log=[_audit_entry({"ip": "45.83.65.12"}, "Confirmed brute-force source.")],
+    )
+    formatted = _format_audit_log(state)
+    assert ".." not in formatted
 
 
 # --- graph-level tests ---------------------------------------------------------------------

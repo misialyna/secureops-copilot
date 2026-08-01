@@ -56,10 +56,21 @@ export function useIncidentSession() {
   const [evidenceFiles, setEvidenceFiles] = useState<string[]>([])
   const [pending, setPending] = useState<PendingAction>(null)
   const [error, setError] = useState<string | null>(null)
+  // ZNALEZISKO #10: IncidentResponse never says "clarification happened", only the current
+  // status — so once the thread moves past awaiting_clarification, that fact is otherwise lost.
+  // Tracked here, client-side, for as long as this tab's session lasts (restoring via ?thread=
+  // after a fresh page load can't recover it — a real fix needs the backend to expose it).
+  const [sawClarification, setSawClarification] = useState(false)
 
   useEffect(() => {
     writeThreadToUrl(threadId)
   }, [threadId])
+
+  useEffect(() => {
+    if (incident?.status === 'awaiting_clarification') {
+      setSawClarification(true)
+    }
+  }, [incident])
 
   // Restore session on first load only, e.g. after a page refresh that landed on ?thread=...
   useEffect(() => {
@@ -174,6 +185,7 @@ export function useIncidentSession() {
     setEvidenceFiles([])
     setPending(null)
     setError(null)
+    setSawClarification(false)
   }, [])
 
   return {
@@ -182,6 +194,7 @@ export function useIncidentSession() {
     evidenceFiles,
     pending,
     error,
+    sawClarification,
     submitDraft,
     addEvidence,
     start,
