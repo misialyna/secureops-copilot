@@ -18,6 +18,22 @@ class FakeRetriever:
         return []
 
 
+def _unused_llm() -> RunnableLambda:
+    """A fake for the four LLM roles these tests never actually reach (classify raises first).
+
+    build_graph() constructs a real ChatGroq for every role not explicitly overridden — eagerly,
+    at construction time, before any node runs. A real ChatGroq's __init__ needs a real API key
+    (see the "critical Groq gotcha" in this project's history); without one it raises immediately,
+    which is exactly what broke CI here even though classify_llm alone was overridden. This
+    raises AssertionError instead of quietly succeeding, so if that assumption ever stops
+    holding, the test fails loudly rather than silently doing the wrong thing."""
+
+    def _fail(messages: object) -> None:
+        raise AssertionError("this LLM role should never be invoked in this test")
+
+    return RunnableLambda(_fail)
+
+
 def _make_rate_limit_error(*, daily: bool) -> RateLimitError:
     """Builds a real groq.RateLimitError with the same shape Groq actually returns (confirmed
     by hand during the Etap 7 acceptance session), without any network call."""
@@ -73,7 +89,14 @@ async def test_daily_rate_limit_logs_warning_and_returns_daily_detail(
         evidence_dir=str(tmp_path / "evidence"), drafts_dir=str(tmp_path / "drafts")
     )
     app = create_app(settings=settings)
-    app.state.graph = build_graph(classify_llm=RunnableLambda(_raise), retriever=FakeRetriever())
+    app.state.graph = build_graph(
+        classify_llm=RunnableLambda(_raise),
+        tools_llm=_unused_llm(),
+        plan_llm=_unused_llm(),
+        approval_llm=_unused_llm(),
+        report_llm=_unused_llm(),
+        retriever=FakeRetriever(),
+    )
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -102,7 +125,14 @@ async def test_per_minute_rate_limit_returns_per_minute_detail(tmp_path: Path) -
         evidence_dir=str(tmp_path / "evidence"), drafts_dir=str(tmp_path / "drafts")
     )
     app = create_app(settings=settings)
-    app.state.graph = build_graph(classify_llm=RunnableLambda(_raise), retriever=FakeRetriever())
+    app.state.graph = build_graph(
+        classify_llm=RunnableLambda(_raise),
+        tools_llm=_unused_llm(),
+        plan_llm=_unused_llm(),
+        approval_llm=_unused_llm(),
+        report_llm=_unused_llm(),
+        retriever=FakeRetriever(),
+    )
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
