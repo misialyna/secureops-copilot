@@ -242,3 +242,8 @@ data/drafts/
 !demo/*.log
 !eval/fixtures/*.log
 
+# eval/run_eval.py copies eval/fixtures/ into a per-scenario evidence dir per run, exactly like
+# data/evidence/ in production — regenerable, not committed. raw.jsonl and report.md (the actual
+# evaluation output) are not covered by this and are committed normally.
+eval/results/*/evidence/
+
