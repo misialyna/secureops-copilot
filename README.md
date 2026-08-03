@@ -329,6 +329,35 @@ and if `propose_actions` proposes nothing, the run finishes as `status: "complet
 pausing for approval — `report` still runs either way, so the final response always includes a
 Markdown report.
 
+## Evaluation
+
+`eval/` is a synthetic-incident evaluation harness (Etap 8) — 15 hand-written scenarios covering
+all 8 incident categories, run through the real graph against the real Groq API (no mocks), with
+metrics computed on the results: classification accuracy, citation recall/precision, a groundless
+active-action rate, plan padding, report faithfulness (LLM-assisted, human-reviewed), and token
+cost. Full methodology, numbers, and interpretation: [`eval/report.md`](eval/report.md).
+
+Headline numbers (14/15 scenarios; see the report for the exact partial-dataset caveat):
+
+- Classification accuracy: **85%** exact, **92%** including a defensible neighbor category.
+- Citation recall — the final report cites its sources in **0%** of scenarios, vs. **77%** for the
+  diagnostic plan using the same underlying citation data — the clearest actionable gap found.
+- Groundless active-action rate: **100%** of no-clear-target scenarios still got a proposed
+  `block_ip` action — three distinct failure modes (a crash, an obvious placeholder IP, and one
+  syntactically-valid-looking fabricated IP caught only by luck), broken down with exact scenario
+  IDs in the report.
+- Token cost: median **~10.4k** tokens/scenario, letting roughly **9** full runs fit in Groq's
+  100k-tokens/day free-tier budget for `llama-3.3-70b-versatile`.
+
+**Not part of CI** — it spends real Groq tokens and takes minutes per scenario, so it's a manual,
+occasional check rather than something that runs on every push:
+
+```bash
+uv run python -m eval.run_eval                    # fresh run, all scenarios
+uv run python -m eval.run_eval --resume eval/results/<timestamp>  # continue after a rate-limit stop
+uv run python -m eval.metrics --raw-jsonl eval/results/<timestamp>/raw.jsonl --output eval/report.md
+```
+
 ## Known limitations
 
 **Drafts and evidence files are ephemeral.** Incident drafts (JSON files, created by
