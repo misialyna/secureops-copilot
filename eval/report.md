@@ -82,6 +82,50 @@ On 5 scenarios: 70B matched the expected category 5/5, 8B matched 5/5.
 
 Matches the accuracy of 70B on this small sample — a candidate for moving classification to the cheaper/faster model specifically, which would help both token budget and rate-limit resilience (ZNALEZISKO #4). Sample size (5) is too small to be conclusive on its own; treat as a promising signal to expand in Etap 9, not a final answer.
 
+## Part D — measured fixes
+
+### Groundless action rate — propose_actions prompt fix
+
+`APPROVAL_SYSTEM_PROMPT` (`backend/app/graph/nodes.py`) was extended with an explicit "no basis,
+no proposal" rule and a worked example. The Groq 70B daily quota ran out mid-measurement, so only
+2 of the 10 originally-groundless scenarios could be re-tested — a cheap replay reusing each
+scenario's already-stored classification/plan/tool_results and calling only the `propose_actions`
+LLM step (not a full graph re-run):
+
+- **phishing-single-user** — before: `block_ip({"ip": "nie dotyczy"})`. After: no proposal.
+  **Fixed.**
+- **phishing-mass-campaign** — before: `block_ip({"ip": "link_domain_ip_address"})`. After:
+  `block_ip({"ip": "nie dotyczy"})` — still proposes an action, just with a *different* invalid
+  placeholder. **Not fixed.**
+
+Conclusion: the prompt fix reduces the problem but does not eliminate the model's underlying
+tendency to always propose *some* action. Recommendation for Etap 9: add a hard **semantic**
+validation step in code (not just IP-format validation) — check whether the proposed IP actually
+appears in this thread's `tool_results`/evidence before a proposal ever reaches the approval
+panel. This moves the guarantee from "trust the prompt" to "verify in code," the same principle
+`execute_tool`/`PermissionError` already applies to execution itself.
+
+- **malware-keylogger** (the crash case) could not be retested this way — the original run
+  errored before classification/plan were captured, so testing it needs a full scenario re-run,
+  not just a `propose_actions` replay. It remains a separate, unfixed bug (the unguarded
+  `TypeError` in `preview_tool`), out of Part D's scope.
+- The remaining 7 scenarios (`unauthorized-access-leaked-creds`, `data-breach-s3-bucket`,
+  `data-breach-db-exfil`, `insider-threat-departing-employee`, `other-badge-cloning`,
+  `ransomware-fileserver`, `dos-volumetric`) are unmeasured — to be completed once the daily
+  quota allows.
+
+### Citation recall — report_llm prompt experiment
+
+Code change implemented (`backend/app/graph/report.py`): each diagnostic-plan step shown to
+`report_llm` is now annotated with its already-confirmed citation marker (e.g. "this step is
+already confirmed to cite [4]; reuse that marker if you restate this finding"), so the model
+doesn't have to independently rediscover which citation a finding maps to.
+
+Not yet measured: 0 of the planned 5-scenario subset (`data-breach-db-exfil`,
+`ransomware-fileserver`, `dos-application-layer`, `phishing-mass-campaign`,
+`phishing-single-user`) have been re-run against the new code — blocked by the same quota
+exhaustion. To be completed once the daily quota allows.
+
 ## Scope decisions (this stage measures and decides — it does not fix everything)
 
 Per the Etap 8 brief, each finding below is either fixed now (Part D, gated on the numbers above — see the project's commit history for exactly what changed and why) or deliberately deferred. Deferring is a scope decision, not an oversight:

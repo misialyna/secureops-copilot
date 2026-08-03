@@ -156,11 +156,20 @@ def _build_report_prompt(state: AgentState, allowed: list[AllowedCitation]) -> s
         parts.append(clarifications)
 
     if state.plan is not None:
-        steps_text = "\n".join(
-            f"[priority {step.priority}] {step.description} — {step.rationale} "
-            f"(expected evidence: {step.expected_evidence})"
-            for step in state.plan.steps
-        )
+        n_by_key = {(c.source_id, c.page): c.n for c in allowed}
+
+        def _render_step(step: Any) -> str:
+            line = (
+                f"[priority {step.priority}] {step.description} — {step.rationale} "
+                f"(expected evidence: {step.expected_evidence})"
+            )
+            cited_ns = sorted({n_by_key[(c.source_id, c.page)] for c in step.citations if (c.source_id, c.page) in n_by_key})
+            if cited_ns:
+                markers = ", ".join(f"[{n}]" for n in cited_ns)
+                line += f" — this step is already confirmed to cite {markers}; reuse that marker if you restate this finding"
+            return line
+
+        steps_text = "\n".join(_render_step(step) for step in state.plan.steps)
         parts.append(f"Diagnostic plan:\n{steps_text}")
         if state.plan.caveats:
             caveats_text = "\n".join(f"- {caveat}" for caveat in state.plan.caveats)
