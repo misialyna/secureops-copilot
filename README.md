@@ -337,15 +337,20 @@ metrics computed on the results: classification accuracy, citation recall/precis
 active-action rate, plan padding, report faithfulness (LLM-assisted, human-reviewed), and token
 cost. Full methodology, numbers, and interpretation: [`eval/report.md`](eval/report.md).
 
-Headline numbers (14/15 scenarios; see the report for the exact partial-dataset caveat):
+Headline numbers (full 15/15 dataset):
 
-- Classification accuracy: **85%** exact, **92%** including a defensible neighbor category.
-- Citation recall — the final report cites its sources in **0%** of scenarios, vs. **77%** for the
-  diagnostic plan using the same underlying citation data — the clearest actionable gap found.
-- Groundless active-action rate: **100%** of no-clear-target scenarios still got a proposed
-  `block_ip` action — three distinct failure modes (a crash, an obvious placeholder IP, and one
-  syntactically-valid-looking fabricated IP caught only by luck), broken down with exact scenario
-  IDs in the report.
+- Classification accuracy: **79%** exact, **93%** including a defensible neighbor category.
+- Citation recall — the final report cites its sources in **7%** of scenarios, vs. **79%** for the
+  diagnostic plan using the same underlying citation data. A prompt fix (feeding `report_llm` each
+  plan step's already-confirmed citation marker) measured **5/5 fixed vs. 0/5 before** on a
+  replayed subset — the 7% here is the one scenario in the main dataset that already ran with the
+  fixed code.
+- Groundless active-action rate: **91%** of no-clear-target scenarios still got a proposed
+  `block_ip` action. A "no basis, no proposal" prompt fix only partially helped when measured
+  before/after: **4/9 fixed, 2/9 unchanged, and 3/9 made worse** — those three now omit the
+  required argument entirely instead of inventing a placeholder, which crashes the same unguarded
+  code path a different scenario already crashed on. See the report for why a code-level guard,
+  not just a prompt change, is the actual fix needed here.
 - Token cost: median **~10.4k** tokens/scenario, letting roughly **9** full runs fit in Groq's
   100k-tokens/day free-tier budget for `llama-3.3-70b-versatile`.
 
