@@ -14,7 +14,7 @@ Projekt portfolio budowany etapami przez studentkę — patrz sekcja "Tryb tutor
 - **React + Vite** — frontend (katalog `frontend/`)
 - **pytest** — testy; **ruff** — lint i format
 - **Docker** + **GitHub Actions** — CI/CD; deployment na HF Spaces (Docker Space)
-- **Langfuse Cloud** — observability (od etapu 6)
+- **Langfuse Cloud** — observability (od etapu 9)
 
 ## Struktura katalogów
 
@@ -43,6 +43,12 @@ docker/
 - Sekrety TYLKO w `.env` (jest w `.gitignore`). Wzorzec zmiennych w `.env.example`. Nigdy nie wpisuj kluczy do kodu ani do commitów.
 - Nie dodawaj nowych zależności bez zapytania — najpierw zaproponuj i uzasadnij.
 - `assert` tylko w testach. W kodzie produkcyjnym zawsze jawne wyjątki (własna klasa błędu, gdy wołający ma to obsłużyć — nie goły `assert`, który znika przy `python -O` i nie da się go sensownie złapać).
+
+## Observability
+
+Langfuse Cloud podłączony przez `CallbackHandler` (`backend/app/observability.py`) — no-op, gdy w `.env` brak `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` (dokładnie ten sam wzorzec co checkpointer SQLite/Postgres). Sesje w Langfuse grupowane po `thread_id`.
+
+**Przy debugowaniu problemu z konkretną sprawą sprawdzaj najpierw trace w Langfuse (cloud.langfuse.com) po `thread_id` z URL-a sesji** — dopiero potem surowe logi uvicorna. Trace pokazuje każdy węzeł grafu jako span z pełnym input/output, tokenami i czasem, więc zwykle szybciej pokaże, co się stało, niż przeszukiwanie logów.
 
 ## Komendy
 
