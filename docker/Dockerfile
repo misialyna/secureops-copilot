@@ -25,6 +25,12 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 COPY backend/ backend/
+# torch is listed as a direct dependency (pyproject.toml) specifically so the [tool.uv.sources]
+# index pin below actually takes effect — confirmed empirically that without a direct listing,
+# uv locks torch from plain PyPI for every platform, and PyPI's Linux wheel drags in the full
+# CUDA stack (nvidia-cublas/cudnn/nccl, triton, cuda-toolkit — several GB) even though nothing
+# here uses a GPU. With the direct dependency, `uv sync --frozen` alone installs the correct
+# CPU-only wheel, no extra steps needed here.
 RUN uv sync --frozen --no-dev --no-editable
 
 COPY knowledge/.gitkeep knowledge/.gitkeep

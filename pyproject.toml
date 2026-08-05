@@ -17,6 +17,13 @@ dependencies = [
     "httpx",
     "qdrant-client",
     "sentence-transformers",
+    # torch is already pulled in transitively by sentence-transformers — listed directly anyway
+    # because [tool.uv.sources]'s index pin below only reliably forks per-platform resolution
+    # (CPU-only wheel, no CUDA) for direct dependencies, not purely transitive ones (confirmed
+    # empirically: without this line, `uv lock` picked plain PyPI for all platforms, and PyPI's
+    # Linux wheel pulls in the full CUDA stack — nvidia-cublas/cudnn/nccl, triton, cuda-toolkit —
+    # even though nothing here uses a GPU).
+    "torch",
     "pymupdf",
     "langchain-text-splitters",
     "langchain-core",
