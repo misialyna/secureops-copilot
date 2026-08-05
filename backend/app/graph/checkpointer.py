@@ -15,6 +15,8 @@ import aiosqlite
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
 from app.config import Settings
 from app.graph.builder import CHECKPOINT_SERDE
@@ -42,7 +44,24 @@ def _ensure_sslmode(database_url: str) -> str:
 async def get_checkpointer(settings: Settings) -> AsyncIterator[BaseCheckpointSaver]:
     if settings.database_url:
         dsn = _ensure_sslmode(settings.database_url)
-        async with AsyncPostgresSaver.from_conn_string(dsn, serde=CHECKPOINT_SERDE) as checkpointer:
+        # AsyncPostgresSaver.from_conn_string() opens a single bare connection and holds it for
+        # the app's entire lifetime — fine against a local always-on Postgres, but managed
+        # Postgres that suspends/drops idle connections (Neon's free tier does this) eventually
+        # kills it, and the next request fails with a raw psycopg.OperationalError instead of a
+        # usable response. A pool with a `check` callback fixes this at the source: AsyncPostgresSaver
+        # accepts an AsyncConnectionPool directly (see langgraph.checkpoint.postgres._ainternal.Conn),
+        # and psycopg_pool validates a connection with a cheap `execute("")` on every checkout,
+        # transparently discarding and replacing it if that fails — so a stale connection never
+        # reaches application code in the first place.
+        async with AsyncConnectionPool(
+            dsn,
+            min_size=1,
+            max_size=5,
+            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+            check=AsyncConnectionPool.check_connection,
+            open=False,
+        ) as pool:
+            checkpointer = AsyncPostgresSaver(conn=pool, serde=CHECKPOINT_SERDE)
             await checkpointer.setup()
             yield checkpointer
         return
