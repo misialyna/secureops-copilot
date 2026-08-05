@@ -20,10 +20,15 @@ from app.evidence import UnsupportedEvidenceExtension, list_evidence, store_evid
 from app.graph.builder import build_graph
 from app.graph.checkpointer import get_checkpointer
 from app.graph.schemas import DiagnosticPlan, IncidentClassification
+from app.observability import get_langfuse_config, init_langfuse
 from app.rag.retriever import RetrievedChunk, get_retriever
 from app.tools.approval import ApprovalDecision, AuditEntry, ProposedAction
 from app.tools.registry import ToolResult
 
+# Python's root logger defaults to WARNING — without this, every logger.info() call in the app
+# (e.g. observability.py confirming Langfuse actually enabled) is silently dropped, not just
+# Langfuse's. Set once, at import time, since app.main is the process entrypoint, not a library.
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEV_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
@@ -151,6 +156,7 @@ async def _current_status(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = Settings()
+    app.state.langfuse_enabled = init_langfuse(settings)
     async with get_checkpointer(settings) as checkpointer:
         app.state.graph = build_graph(checkpointer=checkpointer, settings=settings)
         yield
@@ -159,6 +165,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     settings = settings or Settings()
+    # Real default; lifespan() overwrites it once it actually runs. Tests that build the app
+    # without triggering lifespan (setting app.state.graph directly — see test_incident_lifecycle
+    # .py) never call init_langfuse() either, so False is the honest state here, not a stand-in.
+    app.state.langfuse_enabled = False
 
     app.add_middleware(
         CORSMiddleware,
@@ -236,7 +246,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # though the graph already has real (partial) state for this thread_id.
         delete_draft(Path(settings.drafts_dir), thread_id)
         result = await app.state.graph.ainvoke(
-            {"incident_description": description}, config=config
+            {"incident_description": description},
+            config={**config, **get_langfuse_config(thread_id, app.state.langfuse_enabled)},
         )
         return _build_response(thread_id, result, result.get("__interrupt__", ()))
 
@@ -279,7 +290,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
 
         config = {"configurable": {"thread_id": thread_id}}
-        result = await app.state.graph.ainvoke(Command(resume=resume_value), config=config)
+        result = await app.state.graph.ainvoke(
+            Command(resume=resume_value),
+            config={**config, **get_langfuse_config(thread_id, app.state.langfuse_enabled)},
+        )
         return _build_response(thread_id, result, result.get("__interrupt__", ()))
 
     @app.get("/incidents/{thread_id}")

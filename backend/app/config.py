@@ -27,3 +27,7 @@ class Settings(BaseSettings):
     evidence_dir: str = "data/evidence"
     max_evidence_file_size_mb: int = 50
     drafts_dir: str = "data/drafts"
+
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_base_url: str = "https://cloud.langfuse.com"

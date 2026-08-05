@@ -329,6 +329,50 @@ and if `propose_actions` proposes nothing, the run finishes as `status: "complet
 pausing for approval — `report` still runs either way, so the final response always includes a
 Markdown report.
 
+## Observability
+
+Every `graph.ainvoke` call (`/start` and `/resume`) is traced to [Langfuse](https://langfuse.com)
+via LangChain's callback mechanism, if configured — entirely optional, same pattern as the
+Postgres checkpointer: the app starts and runs fine with no Langfuse account at all.
+
+**Connect your own account:**
+
+1. Create a free project at [cloud.langfuse.com](https://cloud.langfuse.com) (EU) or
+   [us.cloud.langfuse.com](https://us.cloud.langfuse.com) (US).
+2. Copy its API keys into `.env`:
+   ```
+   LANGFUSE_PUBLIC_KEY=pk-lf-...
+   LANGFUSE_SECRET_KEY=sk-lf-...
+   LANGFUSE_BASE_URL=https://cloud.langfuse.com   # or the us.cloud.langfuse.com host, matching your project's region
+   ```
+3. Start the app — the startup log confirms which path was taken:
+   `Langfuse observability enabled (host=...)` or `Langfuse disabled: ... not set.`
+
+**What gets logged.** Each of the two `graph.ainvoke` call sites (`backend/app/main.py`) merges
+in `get_langfuse_config(thread_id, ...)` (`backend/app/observability.py`), which attaches a
+`CallbackHandler` plus `metadata={"langfuse_session_id": thread_id}`. LangGraph's node names
+become span names automatically — no per-node wiring needed — so a single trace shows every node
+(`classify`, `retrieve`, `tools`, `plan`, `propose_actions`/`approval_gate`, `report`) as a nested
+span with its own input/output, token counts, and latency. Every `ainvoke` call for the same
+incident (the initial `/start`, plus any `/resume` after a clarification or approval interrupt)
+shares the same `thread_id`, so Langfuse groups them under one **session** — verified live end to
+end: three separate calls for one incident (classify+clarify, retrieve/tools/plan/propose,
+approval+report) all appeared under one session in the UI.
+
+![Example Langfuse trace for one incident session](docs/screenshot-langfuse-trace.png)
+*Placeholder — replace with your own screenshot after connecting an account.*
+
+**Known limitation: "Total cost" shows $0.00.** Token counts on each `ChatGroq` generation span
+are correct (verified directly via Langfuse's public API — `usage`/`usageDetails` show real
+input/output/total token counts), but the cost in USD stays zero. Langfuse only ships built-in
+per-token pricing for OpenAI, Anthropic, and Google models; Groq isn't in that list, so it can't
+price `llama-3.3-70b-versatile` even though it has everything it needs (token counts + model name)
+to do so. Fix (a Langfuse **project** setting, not a code change): add a custom model definition
+under Project Settings → Models with Groq's actual per-token price (currently $0.59 / 1M input,
+$0.79 / 1M output for this model) — user-defined models take priority over Langfuse's built-in
+list. Left as a manual step rather than automated here, since it's account configuration, not
+application behavior.
+
 ## Evaluation
 
 `eval/` is a synthetic-incident evaluation harness (Etap 8) — 15 hand-written scenarios covering
