@@ -1,5 +1,36 @@
 # Backlog na Etap 9
 
+## ZAMKNIĘTE: try/except wokół `preview_tool` w `propose_actions` — priorytet 1
+
+**Status: naprawione i zweryfikowane (Etap 9, Część B).** `propose_actions` w
+`backend/app/graph/nodes.py` owija teraz `preview_tool(draft.tool_name, draft.args)` w
+try/except — nieudana propozycja jest po prostu pomijana (tak jakby model nic nie zaproponował),
+z ostrzeżeniem logowanym z pełnym kontekstem (`tool_name`, `args`, wyjątek). Wywołanie jest
+dodatkowo owinięte w `RunnableLambda`, dzięki czemu błąd trafia też jako span z błędem do
+Langfuse (widoczny w trace bez grzebania w logach uvicorna — zweryfikowane bezpośrednio przez
+API Langfuse, patrz sekcja Observability w README).
+
+**Dowód — wszystkie 4 znane przypadki potwierdzone w realnym przebiegu przez `eval.run_eval`**
+(nie tylko syntetycznie), pełne dane w [`eval/report.md`](../eval/report.md), sekcja
+"Part D — measured fixes → Etap 9 update":
+
+1. `malware-keylogger` — tym razem model nie zaproponował nic; `completed`, brak crasha.
+2. `data-breach-s3-bucket` — odtworzył dokładnie znany wzorzec `args: {}`; propozycja
+   poprawnie odrzucona, ostrzeżenie zalogowane; `completed`.
+3. `data-breach-db-exfil` — tym razem `args: {"ip": "nie dotyczy"}` (nie `{}` — model nie jest
+   w 100% deterministyczny nawet przy `temperature=0`), złapane przez istniejącą walidację
+   formatu IP; `completed`.
+4. `insider-threat-departing-employee` — jak wyżej, `args: {"ip": "nie dotyczy"}`; `completed`.
+
+**Crash rate na tym podzbiorze: 0% (4/4).** Dodatkowo pokryte 3 testami regresyjnymi w
+`backend/tests/test_approval_gate.py` (brakujący wymagany argument, nieoczekiwany klucz
+argumentu, oraz partia mieszana — jedna zła propozycja nie blokuje dobrej w tej samej decyzji).
+
+---
+
+<details>
+<summary>Oryginalny opis zgłoszenia (przed naprawą)</summary>
+
 ## PILNE: try/except wokół `preview_tool` w `propose_actions` — priorytet 1
 
 **Dlaczego priorytet wyższy niż walidacja semantyczna (patrz niżej):** to dotyczy stabilności
@@ -43,7 +74,9 @@ Wszystkie 3 nowe przypadki (2–4) zostały potwierdzone bezpośrednim wywołani
 z ostrzeżeniem zamiast pozwalać im zabić cały graf. Odrzucona/nieudana propozycja powinna zostać
 pominięta (tak jakby model nic nie zaproponował), a nie crashować `propose_actions_node`.
 
-## Priorytet 2: walidacja semantyczna proponowanych argumentów
+</details>
+
+## Priorytet 2 (nadal otwarte): walidacja semantyczna proponowanych argumentów
 
 Nawet gdy `preview_tool` przestanie crashować, sam fakt, że argument ma poprawny format, nie
 znaczy, że ma sens merytorycznie — patrz ZNALEZISKO #11, przypadek `ransomware-fileserver` /

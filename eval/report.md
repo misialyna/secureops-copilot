@@ -128,6 +128,31 @@ proposed IP actually appears in this thread's `tool_results`/evidence before the
 reaches the approval panel — shifting the guarantee from "trust the prompt" to "verify in code,"
 the same principle `execute_tool`/`PermissionError` already applies to execution itself.
 
+**Etap 9 update — priority-1 recommendation implemented and verified:** `propose_actions` now
+wraps `preview_tool(draft.tool_name, draft.args)` in a try/except (`backend/app/graph/nodes.py`);
+a failing preview drops just that one proposal (treated as "no basis, no proposal") instead of
+crashing the graph, and the failure is logged with full context (`tool_name`, `args`, exception) —
+visible in Langfuse as an errored span nested under `propose_actions`, not only in server logs
+(verified: the RunnableLambda wrapper reports `on_chain_error` to the ambient callback handler
+even without an explicit `config=` argument). Re-ran all 4 known crash-shaped scenarios through
+`eval.run_eval` for real (not a replay) to confirm:
+
+| Scenario | Pattern reproduced this run | Result |
+| --- | --- | --- |
+| malware-keylogger | proposed nothing at all | `completed`, no crash |
+| data-breach-s3-bucket | `args: {}` (the new preview_tool-crashing shape) | `completed`, proposal dropped, warning logged |
+| data-breach-db-exfil | `args: {"ip": "nie dotyczy"}` (placeholder, not `{}` this run) | `completed`, caught by existing IP-format validation |
+| insider-threat-departing-employee | `args: {"ip": "nie dotyczy"}` (placeholder, not `{}` this run) | `completed`, caught by existing IP-format validation |
+
+**4/4 confirmed: 0% crash rate on this subset**, real Groq calls, not synthetic replays. Two of
+the four didn't reproduce the exact `args: {}` shape this time (Groq isn't perfectly deterministic
+even at `temperature=0`) — a good outcome regardless, since it shows the fix holds across whichever
+failure shape the model actually produces, not just the one originally observed. Also covered by 3
+new regression tests in `backend/tests/test_approval_gate.py` (missing required arg, unexpected
+arg key, and a mixed batch where one bad proposal doesn't block a good one). The semantic-validation
+recommendation (priority 2, checking a proposed IP actually appears in `tool_results`) remains open
+— see `docs/etap9-backlog.md`.
+
 **Live confirmation, unplanned:** the newly-collected 15th scenario
 (`ambiguous-encryption-no-ransom-note`, run today with the fixed prompt already in production
 code) is genuinely `no_clear_target` and correctly proposed no action at all — one real production

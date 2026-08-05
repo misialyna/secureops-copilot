@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -5,7 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.runnables import Runnable, RunnableConfig
+from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 from langgraph.types import interrupt
 
 from app.config import Settings
@@ -23,6 +24,8 @@ from app.tools.registry import (
     list_tools,
     preview_tool,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_TOOL_CALLS = 5
 UNTRUSTED_DATA_START = "<untrusted_evidence_data>"
@@ -403,14 +406,32 @@ def build_propose_actions_node(
         if not decision.proposed_actions:
             return {"proposed_actions": []}
 
-        proposed_actions = [
-            ProposedAction(
-                id=uuid4().hex,
-                preview=preview_tool(draft.tool_name, draft.args),
-                **draft.model_dump(),
+        proposed_actions: list[ProposedAction] = []
+        for draft in decision.proposed_actions:
+            # draft.args is a freeform dict straight from the LLM's structured output — nothing
+            # upstream validates it against the tool's actual required arguments, so a malformed
+            # proposal (missing/extra keys) makes preview_tool raise a plain TypeError. Wrapped in
+            # a RunnableLambda so the failure still shows up as an errored span in the trace
+            # (Langfuse/LangSmith etc.) instead of only a log line, without crashing the node —
+            # a bad proposal is dropped, treated the same as the LLM proposing nothing (Etap 8
+            # Part D: "no basis, no proposal"). See docs/etap9-backlog.md.
+            try:
+                preview = RunnableLambda(
+                    lambda _, draft=draft: preview_tool(draft.tool_name, draft.args),
+                    name=f"preview_tool:{draft.tool_name}",
+                ).invoke(None)
+            except Exception as exc:  # noqa: BLE001 - a malformed proposal must not crash the graph
+                logger.warning(
+                    "propose_actions: preview_tool failed for tool_name=%r args=%r: %s "
+                    "— dropping this proposal.",
+                    draft.tool_name,
+                    draft.args,
+                    exc,
+                )
+                continue
+            proposed_actions.append(
+                ProposedAction(id=uuid4().hex, preview=preview, **draft.model_dump())
             )
-            for draft in decision.proposed_actions
-        ]
         return {"proposed_actions": proposed_actions}
 
     return propose_actions

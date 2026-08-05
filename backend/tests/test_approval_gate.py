@@ -311,3 +311,89 @@ def test_no_preview_fn_means_no_preview_but_execution_still_works(
 
     assert resumed["audit_log"][0].executed is True
     assert resumed["audit_log"][0].result_summary == "ran fine"
+
+
+def test_proposal_missing_required_args_is_dropped_not_crashed() -> None:
+    """Etap 9 backlog, priority 1: block_ip with args={} used to crash propose_actions with an
+    uncaught TypeError (block_ip() missing 1 required positional argument: 'ip') — this is the
+    exact shape all 4 known cases took (malware-keylogger, plus data-breach-s3-bucket,
+    data-breach-db-exfil, insider-threat-departing-employee after the Etap 8 Part D prompt fix
+    started producing args={} instead of a placeholder string). The proposal must now be dropped
+    silently, same as the LLM proposing nothing — no crash, no interrupt, empty audit_log."""
+    approval_llm = RunnableLambda(
+        lambda messages: ApprovalGateDecision.model_validate(
+            {
+                "proposed_actions": [
+                    {
+                        "tool_name": "block_ip",
+                        "args": {},
+                        "justification": "j",
+                        "risk_note": "r",
+                    }
+                ]
+            }
+        )
+    )
+    graph = _build(approval_llm)
+    config = {"configurable": {"thread_id": "missing-args-thread"}}
+
+    result = graph.invoke({"incident_description": "x"}, config=config)
+
+    assert "__interrupt__" not in result
+    assert result.get("audit_log", []) == []
+
+
+def test_proposal_with_unexpected_arg_key_is_dropped_not_crashed() -> None:
+    """The other TypeError flavor preview_tool's **kwargs call can hit: an unexpected keyword
+    instead of a missing required one. Same required outcome — dropped, not crashed."""
+    approval_llm = RunnableLambda(
+        lambda messages: ApprovalGateDecision.model_validate(
+            {
+                "proposed_actions": [
+                    {
+                        "tool_name": "block_ip",
+                        "args": {"ip_address": "45.83.65.12"},
+                        "justification": "j",
+                        "risk_note": "r",
+                    }
+                ]
+            }
+        )
+    )
+    graph = _build(approval_llm)
+    config = {"configurable": {"thread_id": "bad-key-thread"}}
+
+    result = graph.invoke({"incident_description": "x"}, config=config)
+
+    assert "__interrupt__" not in result
+    assert result.get("audit_log", []) == []
+
+
+def test_one_malformed_proposal_does_not_block_a_good_one_in_the_same_batch() -> None:
+    """The fix loops over proposals instead of a list comprehension so one bad draft can be
+    skipped without losing the others — verify a valid proposal in the same decision still
+    reaches the approval interrupt."""
+    approval_llm = RunnableLambda(
+        lambda messages: ApprovalGateDecision.model_validate(
+            {
+                "proposed_actions": [
+                    {"tool_name": "block_ip", "args": {}, "justification": "j", "risk_note": "r"},
+                    {
+                        "tool_name": "block_ip",
+                        "args": {"ip": "45.83.65.12"},
+                        "justification": "j2",
+                        "risk_note": "r2",
+                    },
+                ]
+            }
+        )
+    )
+    graph = _build(approval_llm)
+    config = {"configurable": {"thread_id": "mixed-batch-thread"}}
+
+    result = graph.invoke({"incident_description": "x"}, config=config)
+
+    assert "__interrupt__" in result
+    proposed = result["__interrupt__"][0].value["proposed_actions"]
+    assert len(proposed) == 1
+    assert proposed[0]["args"] == {"ip": "45.83.65.12"}
